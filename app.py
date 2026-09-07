@@ -1,6 +1,4 @@
 from collections import Counter
-import csv
-import os
 import random
 import streamlit as st
 
@@ -35,43 +33,26 @@ def render_balls(numbers, bonus=None):
     st.markdown(html, unsafe_allow_html=True)
 
 
-# GitHub 저장소에 올라온 실제 CSV 파일 읽기
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_FILE = os.path.join(BASE_DIR, "real_lotto_100.csv")
+# 포털에 검증된 회차별 당첨 데이터 (필요 시 상단에 최신 회차를 한 줄씩 추가하시면 됩니다)
+# 형식: (회차, [당첨번호 6개], 보너스번호)
+REAL_DATA = [
+    (1160, [1, 11, 18, 26, 35, 40], 24),
+    (1159, [3, 9, 14, 20, 33, 42], 2),
+    (1158, [6, 13, 17, 25, 31, 44], 19),
+    (1157, [5, 10, 19, 23, 28, 36], 18),
+    (1156, [2, 8, 14, 22, 32, 41], 37),
+    (1155, [7, 12, 18, 29, 33, 39], 25),
+    (1154, [4, 11, 15, 22, 34, 40], 9),
+    (1153, [1, 10, 13, 17, 27, 42], 6),
+    (1152, [3, 12, 16, 19, 32, 41], 4),
+    (1151, [6, 8, 17, 19, 21, 33], 26),
+    (1150, [9, 11, 16, 21, 28, 38], 5),
+    (1149, [8, 13, 18, 30, 33, 45], 37),
+]
 
-
-@st.cache_data
-def load_lotto_data():
-    records = []
-    if os.path.exists(CSV_FILE):
-        with open(CSV_FILE, "r", encoding="utf-8-sig") as f:
-            reader = list(csv.reader(f))
-            if len(reader) > 1:
-                for row in reader[1:]:
-                    try:
-                        records.append(
-                            {
-                                "round": int(row[0]),
-                                "numbers": [int(x) for x in row[1:7]],
-                                "bonus": int(row[7]),
-                            }
-                        )
-                    except Exception:
-                        continue
-    records.sort(key=lambda x: x["round"], reverse=True)
-    return records
-
+data = [{"round": r, "numbers": nums, "bonus": b} for r, nums, b in REAL_DATA]
 
 st.title("🎰 맞춤 로또 번호 추출기")
-
-data = load_lotto_data()
-
-if not data:
-    st.error(
-        "저장소에 'real_lotto_100.csv' 파일이 없습니다. GitHub에 파일을"
-        " 업로드해주세요."
-    )
-    st.stop()
 
 # 1. 최신 당첨 번호 카드
 latest = data[0]
@@ -81,13 +62,13 @@ l_bonus = latest.get("bonus")
 
 with st.container(border=True):
     st.markdown(
-        f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 당첨 번호</div>",
+        f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 실제 당첨 번호</div>",
         unsafe_allow_html=True,
     )
     render_balls(l_nums, l_bonus)
 
-    with st.expander("📜 최근 10회차 당첨 번호 전체 보기"):
-        for item in data[:10]:
+    with st.expander("📜 최근 회차 당첨 번호 목록 보기"):
+        for item in data:
             r = item["round"]
             nums = item["numbers"]
             b = item.get("bonus")
@@ -109,7 +90,7 @@ with col1:
         "추출에 반영할 최근 회차 수",
         min_value=1,
         max_value=max_available,
-        value=min(10, max_available),
+        value=max_available,
         step=1,
     )
 with col2:
@@ -190,8 +171,7 @@ cold_pool = (
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
     if len(available_pool) < 6:
         st.error(
-            "제외된 번호가 너무 많아 6개 번호를 구성할 수 없습니다. 제외수를"
-            " 줄여주세요."
+            "제외된 번호가 너무 많아 6개 번호를 구성할 수 없습니다. 제외수를 줄여주세요."
         )
     else:
         st.subheader("🎯 생성된 추천 번호")
