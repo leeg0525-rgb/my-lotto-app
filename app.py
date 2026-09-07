@@ -1,5 +1,7 @@
 from collections import Counter
+from datetime import datetime
 import random
+import requests
 import streamlit as st
 
 st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
@@ -30,117 +32,69 @@ def render_balls(numbers, bonus=None):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-# 최신 1240회 기준 실제 공식 당첨 데이터
-def get_lotto_history():
-    raw_history = [
-        (1240, [11, 13, 19, 20, 31, 44], 27),
-        (1239, [11, 13, 22, 32, 33, 36], 8),
-        (1238, [2, 13, 18, 32, 38, 42], 15),
-        (1237, [4, 11, 19, 26, 37, 43], 29),
-        (1236, [7, 10, 22, 29, 31, 38], 15),
-        (1235, [5, 12, 15, 30, 37, 40], 18),
-        (1234, [14, 16, 19, 20, 29, 34], 41),
-        (1233, [4, 9, 12, 15, 33, 45], 26),
-        (1232, [21, 24, 29, 32, 34, 40], 27),
-        (1231, [1, 6, 13, 19, 21, 33], 4),
-        (1230, [3, 7, 9, 13, 19, 24], 23),
-        (1229, [13, 14, 20, 28, 29, 34], 41),
-        (1228, [6, 7, 19, 28, 34, 41], 5),
-        (1227, [1, 2, 6, 14, 20, 40], 31),
-        (1226, [15, 19, 21, 25, 27, 28], 40),
-        (1225, [5, 10, 11, 17, 28, 34], 22),
-        (1224, [1, 5, 8, 16, 28, 33], 45),
-        (1223, [10, 15, 24, 30, 31, 37], 3),
-        (1222, [4, 5, 9, 11, 37, 40], 7),
-        (1221, [6, 14, 25, 33, 40, 44], 30),
-        (1220, [3, 8, 17, 34, 39, 43], 10),
-        (1219, [13, 19, 21, 24, 34, 35], 26),
-        (1218, [13, 19, 21, 26, 37, 43], 29),
-        (1217, [6, 24, 31, 32, 38, 44], 8),
-        (1216, [2, 19, 26, 31, 38, 41], 35),
-        (1215, [1, 9, 12, 13, 20, 45], 3),
-        (1214, [11, 13, 14, 15, 16, 45], 34),
-        (1213, [3, 4, 9, 30, 33, 36], 12),
-        (1212, [1, 3, 4, 29, 39, 43], 34),
-        (1211, [7, 12, 23, 32, 34, 36], 8),
-        (1210, [10, 16, 19, 32, 33, 38], 3),
-        (1209, [11, 13, 20, 21, 32, 44], 8),
-        (1208, [16, 20, 26, 36, 42, 44], 24),
-        (1207, [3, 13, 30, 33, 43, 45], 25),
-        (1206, [3, 7, 11, 20, 22, 41], 24),
-        (1205, [10, 12, 13, 19, 33, 40], 2),
-        (1204, [7, 19, 26, 37, 39, 44], 27),
-        (1203, [6, 14, 30, 31, 40, 41], 29),
-        (1202, [1, 3, 4, 29, 42, 45], 36),
-        (1201, [6, 16, 34, 37, 39, 40], 11),
-        (1200, [1, 7, 21, 30, 35, 38], 2),
-        (1199, [10, 12, 29, 31, 40, 44], 2),
-        (1198, [13, 14, 22, 26, 37, 38], 20),
-        (1197, [6, 7, 13, 28, 36, 42], 41),
-        (1196, [17, 26, 29, 30, 31, 43], 12),
-        (1195, [3, 20, 28, 38, 40, 43], 4),
-        (1194, [12, 16, 21, 24, 41, 43], 15),
-        (1193, [14, 16, 27, 35, 39, 45], 5),
-        (1192, [1, 12, 16, 19, 23, 43], 34),
-        (1191, [1, 14, 16, 18, 24, 35], 34),
-        (1190, [6, 7, 15, 22, 26, 40], 41),
-        (1189, [10, 17, 22, 30, 35, 43], 44),
-        (1188, [7, 18, 19, 26, 33, 45], 37),
-        (1187, [13, 14, 22, 26, 37, 38], 20),
-        (1186, [12, 19, 21, 29, 40, 45], 1),
-        (1185, [4, 18, 31, 37, 42, 45], 33),
-        (1184, [11, 21, 22, 30, 39, 44], 13),
-        (1183, [13, 14, 18, 21, 34, 44], 26),
-        (1182, [11, 16, 25, 27, 35, 36], 37),
-        (1181, [4, 7, 17, 18, 38, 44], 36),
-        (1180, [8, 12, 13, 29, 33, 42], 5),
-        (1179, [3, 7, 14, 15, 22, 38], 17),
-        (1178, [21, 26, 27, 32, 34, 42], 31),
-        (1177, [1, 9, 16, 23, 24, 38], 17),
-        (1176, [13, 16, 23, 31, 35, 44], 9),
-        (1175, [4, 8, 18, 24, 37, 45], 6),
-        (1174, [6, 10, 11, 14, 36, 45], 18),
-        (1173, [2, 11, 16, 25, 39, 45], 6),
-        (1172, [3, 7, 9, 33, 36, 37], 10),
-        (1171, [1, 23, 24, 35, 44, 45], 10),
-        (1170, [1, 6, 20, 27, 28, 41], 15),
-        (1169, [6, 18, 28, 30, 32, 38], 15),
-        (1168, [16, 18, 20, 23, 32, 43], 27),
-        (1167, [1, 2, 11, 21, 26, 35], 38),
-        (1166, [3, 6, 14, 22, 30, 41], 36),
-        (1165, [1, 10, 18, 22, 28, 31], 34),
-        (1164, [4, 7, 19, 26, 33, 35], 3),
-        (1163, [7, 10, 19, 23, 28, 33], 18),
-        (1162, [6, 11, 16, 19, 21, 32], 45),
-        (1161, [3, 18, 19, 23, 32, 45], 24),
-        (1160, [3, 6, 9, 18, 22, 35], 24),
-        (1159, [3, 6, 22, 23, 24, 38], 30),
-        (1158, [20, 31, 32, 40, 41, 45], 12),
-        (1157, [4, 24, 27, 35, 37, 45], 15),
-        (1156, [3, 10, 24, 33, 38, 45], 36),
-        (1155, [7, 10, 22, 25, 34, 40], 27),
-        (1154, [11, 23, 25, 30, 32, 40], 42),
-        (1153, [8, 13, 19, 27, 40, 45], 12),
-        (1152, [13, 20, 24, 32, 34, 45], 14),
-        (1151, [4, 7, 12, 14, 22, 33], 31),
-        (1150, [14, 19, 27, 28, 30, 45], 33),
-        (1149, [22, 26, 30, 32, 33, 41], 27),
-        (1148, [5, 17, 26, 27, 35, 38], 1),
-        (1147, [21, 26, 30, 32, 33, 34], 40),
-        (1146, [6, 12, 17, 21, 32, 39], 30),
-        (1145, [3, 5, 13, 20, 21, 37], 17),
-        (1144, [6, 12, 17, 21, 32, 39], 30),
-        (1143, [2, 20, 33, 40, 42, 44], 32),
-        (1142, [7, 16, 25, 29, 35, 36], 28),
-        (1141, [6, 14, 15, 19, 21, 41], 37)
-    ]
-    return [{"round": r, "numbers": nums, "bonus": b} for r, nums, b in raw_history]
+# 1회차(2002-12-07 20:00) 기준 현재 최신 추첨 회차 계산 공식
+def calculate_latest_round():
+    start_date = datetime(2002, 12, 7, 20, 45)
+    now = datetime.now()
+    diff = now - start_date
+    weeks = diff.days // 7
+    return 1 + weeks
 
+# 동행복권 공식 JSON API 호출 함수 (User-Agent 헤더 필수)
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_lotto_history_api(target_count=100):
+    estimated_latest = calculate_latest_round()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    results = []
+    # 최신 회차가 아직 발표 전일 수 있으므로 추정치부터 역순 탐색
+    curr_round = estimated_latest
+    
+    # 1. 실제 유효한 가장 최근 회차 탐색
+    while curr_round > 0:
+        url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={curr_round}"
+        try:
+            res = requests.get(url, headers=headers, timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("returnValue") == "success":
+                    nums = [data[f"drwtNo{i}"] for i in range(1, 7)]
+                    results.append({"round": curr_round, "numbers": nums, "bonus": data.get("bnusNo")})
+                    break
+        except Exception:
+            pass
+        curr_round -= 1
+
+    # 2. 최신 회차 기준으로 과거 100회차분 수집
+    if results:
+        found_latest = results[0]["round"]
+        for r in range(found_latest - 1, max(0, found_latest - target_count), -1):
+            url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={r}"
+            try:
+                res = requests.get(url, headers=headers, timeout=3)
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("returnValue") == "success":
+                        nums = [data[f"drwtNo{i}"] for i in range(1, 7)]
+                        results.append({"round": r, "numbers": nums, "bonus": data.get("bnusNo")})
+            except Exception:
+                continue
+
+    return results
+
+# --- UI 메인 ---
 st.title("🎰 맞춤 로또 번호 추출기")
 
-data = get_lotto_history()
+with st.spinner("동행복권 공식 서버에서 최신 100회차 데이터를 동기화하는 중입니다..."):
+    data = fetch_lotto_history_api(target_count=100)
 
-# 1. 최신 당첨 번호 카드 표시 (1240회)
+if not data:
+    st.error("동행복권 서버 통신에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+    st.stop()
+
+# 1. 실시간 최신 회차 및 최근 10회차 표시
 latest = data[0]
 l_round = latest["round"]
 l_nums = latest["numbers"]
@@ -164,10 +118,11 @@ excluded_numbers = st.multiselect(
     placeholder="제외하고 싶은 번호를 터치해 선택하세요"
 )
 
-# 3. 분석 및 생성 설정 (1~100회차)
+# 3. 분석 및 생성 옵션 설정
+max_available = len(data)
 col1, col2 = st.columns(2)
 with col1:
-    recent_count = st.slider("추출에 반영할 최근 회차 수", min_value=1, max_value=100, value=10, step=1)
+    recent_count = st.slider("추출에 반영할 최근 회차 수", min_value=1, max_value=max_available, value=min(10, max_available), step=1)
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
@@ -184,7 +139,7 @@ strategy = st.radio(
 
 # 5. 통계 조회 섹션 (1~100회차 실시간 연동)
 with st.expander("📊 회차별 출현 통계 실시간 조회", expanded=False):
-    stat_range = st.slider("조회할 최근 회차 범위 (1~100회)", min_value=1, max_value=100, value=recent_count, step=1, key="stat_slider")
+    stat_range = st.slider("조회할 최근 회차 범위 (1~100회)", min_value=1, max_value=max_available, value=recent_count, step=1, key="stat_slider")
     
     stat_subset = data[:stat_range]
     stat_nums = []
@@ -194,7 +149,7 @@ with st.expander("📊 회차별 출현 통계 실시간 조회", expanded=False
     stat_counts = Counter(stat_nums)
     stat_ranked = sorted(range(1, 46), key=lambda x: stat_counts.get(x, 0), reverse=True)
     
-    st.caption(f"💡 최근 **{stat_range}회차**(제 {stat_subset[-1]['round']}회 ~ 제 {stat_subset[0]['round']}회) 실제 집계 결과입니다.")
+    st.caption(f"💡 최근 **{stat_range}회차**(제 {stat_subset[-1]['round']}회 ~ 제 {stat_subset[0]['round']}회) 실제 공식 집계 결과입니다.")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**🔥 많이 나온 번호 (상위 6개)**")
