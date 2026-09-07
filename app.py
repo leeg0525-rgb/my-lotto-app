@@ -92,10 +92,10 @@ excluded_numbers = st.multiselect(
     placeholder="제외하고 싶은 번호를 터치해 선택하세요"
 )
 
-# 3. 분석 옵션 설정 (1~100회차 지원)
+# 3. 분석 및 생성 설정 (1~100회차 지원)
 col1, col2 = st.columns(2)
 with col1:
-    recent_count = st.slider("분석할 최근 회차 수", min_value=1, max_value=100, value=10, step=1)
+    recent_count = st.slider("추출에 반영할 최근 회차 수", min_value=1, max_value=100, value=10, step=1)
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
@@ -110,7 +110,32 @@ strategy = st.radio(
     ]
 )
 
-# 슬라이더 값(1~100회차)에 맞춘 동적 데이터 집계
+# 5. 통계 조회 전용 섹션 (1~100회차 자유 설정 및 실시간 연동)
+with st.expander("📊 회차별 출현 통계 실시간 조회", expanded=False):
+    stat_range = st.slider("조회할 최근 회차 범위 (1~100회)", min_value=1, max_value=100, value=recent_count, step=1, key="stat_slider")
+    
+    # 선택된 stat_range 기준으로 실시간 집계
+    stat_sorted = sorted(data, key=lambda x: x["round"], reverse=True)[:stat_range]
+    stat_nums = []
+    for item in stat_sorted:
+        nums = item.get("numbers") or [item[f"drwtNo{i}"] for i in range(1, 7)]
+        stat_nums.extend(nums)
+    
+    stat_counts = Counter(stat_nums)
+    stat_ranked = sorted(range(1, 46), key=lambda x: stat_counts.get(x, 0), reverse=True)
+    
+    st.caption(f"💡 최근 **{stat_range}회차** 동안의 출현 빈도 순위입니다.")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**🔥 많이 나온 번호 (상위)**")
+        for num in stat_ranked[:6]:
+            st.write(f"- **{num}번** ({stat_counts.get(num, 0)}회 출현)")
+    with c2:
+        st.markdown("**❄️ 안 나온 번호 (하위)**")
+        for num in stat_ranked[-6:]:
+            st.write(f"- **{num}번** ({stat_counts.get(num, 0)}회 출현)")
+
+# 추천 번호 생성용 데이터 집계 (recent_count 기준)
 sorted_items = sorted(data, key=lambda x: x["round"], reverse=True)[:recent_count]
 all_numbers = []
 for item in sorted_items:
@@ -118,7 +143,6 @@ for item in sorted_items:
     all_numbers.extend(nums)
 
 counts = Counter(all_numbers)
-
 available_pool = [n for n in range(1, 46) if n not in excluded_numbers]
 ranked_available = sorted(available_pool, key=lambda x: counts.get(x, 0), reverse=True)
 
@@ -127,18 +151,6 @@ not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
 
 hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
 cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
-
-# 5. 통계 아코디언 (1~100회차 슬라이더 값 실시간 반영)
-with st.expander(f"📊 최근 {recent_count}회차 출현 통계 보기", expanded=False):
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**🔥 많이 나온 번호 (상위)**")
-        for num in ranked_available[:6]:
-            st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
-    with c2:
-        st.markdown("**❄️ 안 나온 번호 (하위)**")
-        for num in ranked_available[-6:]:
-            st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
 
 # 번호 생성 버튼
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
