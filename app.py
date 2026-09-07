@@ -77,7 +77,6 @@ if data:
         st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 당첨 번호</div>", unsafe_allow_html=True)
         render_balls(l_nums, l_bonus)
         
-        # 최근 10회차 당첨 번호 확인
         with st.expander("📜 최근 10회차 당첨 번호 전체 보기"):
             for item in all_sorted[:10]:
                 r = item["round"]
@@ -93,10 +92,10 @@ excluded_numbers = st.multiselect(
     placeholder="제외하고 싶은 번호를 터치해 선택하세요"
 )
 
-# 3. 분석 옵션 설정 (1~20회차 슬라이더)
+# 3. 분석 옵션 설정 (1~100회차 지원)
 col1, col2 = st.columns(2)
 with col1:
-    recent_count = st.slider("분석할 최근 회차 수", min_value=1, max_value=20, value=10, step=1)
+    recent_count = st.slider("분석할 최근 회차 수", min_value=1, max_value=100, value=10, step=1)
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
@@ -111,7 +110,7 @@ strategy = st.radio(
     ]
 )
 
-# 슬라이더 값에 맞춘 동적 데이터 집계
+# 슬라이더 값(1~100회차)에 맞춘 동적 데이터 집계
 sorted_items = sorted(data, key=lambda x: x["round"], reverse=True)[:recent_count]
 all_numbers = []
 for item in sorted_items:
@@ -129,15 +128,15 @@ not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
 hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
 cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
 
-# 통계 아코디언 (실시간 회차 연동)
+# 5. 통계 아코디언 (1~100회차 슬라이더 값 실시간 반영)
 with st.expander(f"📊 최근 {recent_count}회차 출현 통계 보기", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f"**🔥 많이 나온 번호 (상위)**")
+        st.markdown("**🔥 많이 나온 번호 (상위)**")
         for num in ranked_available[:6]:
             st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
     with c2:
-        st.markdown(f"**❄️ 안 나온 번호 (하위)**")
+        st.markdown("**❄️ 안 나온 번호 (하위)**")
         for num in ranked_available[-6:]:
             st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
 
