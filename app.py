@@ -5,10 +5,12 @@ import json
 import os
 import urllib.request
 from datetime import datetime
+import io
+from PIL import Image, ImageDraw, ImageFont
 
 st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
 
-# ================= 영구 저장소 (JSON 파일 관리) =================
+# ================= 영구 저장소 =================
 DATA_FILE = "my_lotto_history.json"
 
 def load_saved_history():
@@ -25,26 +27,29 @@ def save_history_to_disk(history_list):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(history_list, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        st.error(f"저장 중 오류가 발생했습니다: {e}")
+        st.error(f"저장 오류: {e}")
 
-# 앱 시작 시 영구 파일에서 저장 기록 불러오기
 if "my_saved_groups" not in st.session_state:
     st.session_state.my_saved_groups = load_saved_history()
 if "last_generated_games" not in st.session_state:
     st.session_state.last_generated_games = []
 
-# ================= UI 디자인 함수 =================
-def get_ball_color(num):
+# ================= 색상 정의 =================
+def get_ball_rgb(num):
     if num <= 10:
-        return "#fbc400"
+        return (251, 196, 0)    # 노랑
     elif num <= 20:
-        return "#69c8f2"
+        return (105, 200, 242)  # 파랑
     elif num <= 30:
-        return "#ff7272"
+        return (255, 114, 114)  # 빨강
     elif num <= 40:
-        return "#aaaaaa"
+        return (170, 170, 170)  # 회색
     else:
-        return "#b0d840"
+        return (176, 216, 64)   # 녹색
+
+def get_ball_color(num):
+    rgb = get_ball_rgb(num)
+    return f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
 
 def render_balls(numbers, bonus=None):
     html = '<div style="display: flex; gap: 8px; justify-content: center; align-items: center; margin: 6px 0;">'
@@ -58,7 +63,64 @@ def render_balls(numbers, bonus=None):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-# 1240회 ~ 1141회 공식 데이터 베이스
+# 영수증 이미지 생성 함수 (PNG)
+def create_ticket_image(round_no, games_list, time_str):
+    width = 460
+    header_h = 130
+    row_h = 58
+    footer_h = 50
+    height = header_h + (len(games_list) * row_h) + footer_h
+    
+    img = Image.new("RGB", (width, height), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    
+    # 폰트 로드 시도
+    font_bold = ImageFont.load_default()
+    font_main = ImageFont.load_default()
+    font_ball = ImageFont.load_default()
+    for f_path in ["malgunbd.ttf", "AppleGothic.ttf", "DejaVuSans-Bold.ttf"]:
+        try:
+            font_bold = ImageFont.truetype(f_path, 22)
+            font_main = ImageFont.truetype(f_path, 13)
+            font_ball = ImageFont.truetype(f_path, 15)
+            break
+        except Exception:
+            continue
+
+    # 테두리 및 헤더
+    draw.rectangle([(8, 8), (width - 9, height - 9)], outline=(210, 210, 210), width=2)
+    draw.text((width // 2, 35), "AI LOTTO 6/45", fill=(40, 40, 40), font=font_bold, anchor="mm")
+    draw.text((width // 2, 68), f"제 {round_no}회 추천 조합", fill=(30, 90, 200), font=font_bold, anchor="mm")
+    draw.text((width // 2, 98), f"발행일시: {time_str}", fill=(120, 120, 120), font=font_main, anchor="mm")
+    draw.line([(25, 118), (width - 25, 118)], fill=(225, 225, 225), width=1)
+
+    labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+    y_curr = header_h
+    r = 18
+
+    for idx, nums in enumerate(games_list):
+        lbl = labels[idx] if idx < len(labels) else str(idx + 1)
+        draw.text((38, y_curr + 22), f"{lbl} 자 동", fill=(80, 80, 80), font=font_main, anchor="lm")
+        
+        start_x = 118
+        gap = 52
+        for b_idx, n in enumerate(sorted(nums)):
+            cx = start_x + (b_idx * gap)
+            cy = y_curr + 22
+            bg_color = get_ball_rgb(n)
+            draw.ellipse([(cx - r, cy - r), (cx + r, cy + r)], fill=bg_color)
+            draw.text((cx, cy), str(n), fill=(255, 255, 255), font=font_ball, anchor="mm")
+            
+        y_curr += row_h
+
+    draw.line([(25, y_curr + 5), (width - 25, y_curr + 5)], fill=(225, 225, 225), width=1)
+    draw.text((width // 2, y_curr + 28), "1등 당첨을 진심으로 기원합니다!", fill=(140, 140, 140), font=font_main, anchor="mm")
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+# 공식 100회차 베이스 데이터
 BASE_DATA = [
     (1240, [11, 13, 19, 20, 31, 44], 27), (1239, [11, 13, 22, 32, 33, 36], 8),
     (1238, [2, 13, 18, 32, 38, 42], 22), (1237, [10, 20, 23, 34, 37, 40], 36),
@@ -150,22 +212,17 @@ target_next_round = latest_round + 1
 
 st.title("🎰 맞춤 로또 번호 추출기")
 
-# 1. 최신 당첨 번호 카드
+# 1. 최근 당첨 번호
 latest = data[0]
 with st.container(border=True):
     st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {latest['round']}회) 실제 공식 당첨 번호</div>", unsafe_allow_html=True)
     render_balls(latest["numbers"], latest.get("bonus"))
-    
-    with st.expander("📜 최근 10회차 실제 당첨 번호 보기"):
-        for item in data[:10]:
-            b_str = f" + 보너스 {item.get('bonus')}" if item.get("bonus") else ""
-            st.caption(f"**제 {item['round']}회** : {sorted(item['numbers'])}{b_str}")
 
-# 2. 영구 보관함 (새로고침해도 유지됨)
+# 2. 나의 저장 번호 보관함
 total_saved_games = sum(len(grp["games"]) for grp in st.session_state.my_saved_groups)
 with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my_saved_groups)}개 세트 / 총 {total_saved_games}게임)", expanded=len(st.session_state.my_saved_groups) > 0):
     if not st.session_state.my_saved_groups:
-        st.info("아직 보관함에 저장된 번호가 없습니다. 추천 번호를 뽑고 저장해 보세요.")
+        st.info("아직 보관함에 저장된 번호가 없습니다.")
     else:
         for grp_idx, grp in enumerate(st.session_state.my_saved_groups):
             with st.container(border=True):
@@ -184,14 +241,25 @@ with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my
                         st.caption(f"**{g_idx}번**")
                     with col_balls:
                         render_balls(g_nums)
+                
+                # 보관함에서도 영수증 이미지 다운로드 지원
+                saved_img_bytes = create_ticket_image(grp["round"], grp["games"], grp["time"])
+                st.download_button(
+                    label="🖼️ 이 세트 영수증 사진 다운로드",
+                    data=saved_img_bytes,
+                    file_name=f"로또_{grp['round']}회_{grp['title']}.png",
+                    mime="image/png",
+                    key=f"dl_saved_{grp_idx}",
+                    use_container_width=True
+                )
         
         if st.button("🗑️ 보관함 전체 삭제", type="secondary"):
             st.session_state.my_saved_groups = []
             save_history_to_disk([])
             st.rerun()
 
-# 3. 추출 설정
-excluded_numbers = st.multiselect("🚫 조합에서 제외할 번호 선택", options=list(range(1, 46)), placeholder="제외수를 터치해 선택하세요")
+# 3. 번호 추출 설정
+excluded_numbers = st.multiselect("🚫 조합에서 제외할 번호 선택", options=list(range(1, 46)), placeholder="제외수를 선택하세요")
 
 max_available = len(data)
 col1, col2 = st.columns(2)
@@ -218,7 +286,6 @@ not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
 hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
 cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
 
-# 추천 번호 생성 버튼
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
     if len(available_pool) < 6:
         st.error("제외수가 너무 많아 6개 번호를 구성할 수 없습니다.")
@@ -256,45 +323,48 @@ if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primar
             generated.append(sorted(picked))
         st.session_state.last_generated_games = generated
 
-# 생성 결과 표시 및 파일 영구 저장
+# 추천 결과 화면 및 사진 저장/다운로드
 if st.session_state.last_generated_games:
     st.markdown("---")
     st.subheader(f"🎯 제 {target_next_round}회 추천 조합")
     
     total_g = len(st.session_state.last_generated_games)
-    save_all = st.button(
-        f"💾 추출된 {total_g}게임 전체 한 번에 보관함 저장하기", 
-        type="primary", 
-        use_container_width=True
-    )
-    if save_all:
-        group_ticket = {
-            "round": target_next_round,
-            "title": f"추천 {total_g}게임 세트",
-            "games": st.session_state.last_generated_games,
-            "time": datetime.now().strftime("%m-%d %H:%M")
-        }
-        # 메모리와 로컬 파일에 동시 기록
-        st.session_state.my_saved_groups.append(group_ticket)
-        save_history_to_disk(st.session_state.my_saved_groups)
-        st.success(f"제 {target_next_round}회차 추천 {total_g}게임이 영구 저장되었습니다!")
-        st.rerun()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    # 1. 영수증 이미지 생성
+    img_data = create_ticket_image(target_next_round, st.session_state.last_generated_games, now_str)
+    
+    col_save, col_dl = st.columns(2)
+    with col_save:
+        save_all = st.button(f"💾 보관함에 영구 저장 ({total_g}게임)", type="primary", use_container_width=True)
+        if save_all:
+            group_ticket = {
+                "round": target_next_round,
+                "title": f"추천 {total_g}게임 세트",
+                "games": st.session_state.last_generated_games,
+                "time": datetime.now().strftime("%m-%d %H:%M")
+            }
+            st.session_state.my_saved_groups.append(group_ticket)
+            save_history_to_disk(st.session_state.my_saved_groups)
+            st.success(f"제 {target_next_round}회차 추천 {total_g}게임이 보관함에 저장되었습니다!")
+            st.rerun()
 
+    with col_dl:
+        # 사진 앱/갤러리 다운로드 버튼
+        st.download_button(
+            label=f"🖼️ 영수증 사진 다운로드 (PNG)",
+            data=img_data,
+            file_name=f"로또_{target_next_round}회_추천_{total_g}게임.png",
+            mime="image/png",
+            use_container_width=True
+        )
+
+    # 2. 영수증 미리보기
+    with st.expander("👁️ 사진 영수증 미리보기"):
+        st.image(img_data, caption=f"제 {target_next_round}회 로또 발권 티켓", use_container_width=True)
+
+    # 개별 게임 카드 표시
     for i, nums in enumerate(st.session_state.last_generated_games, start=1):
         with st.container(border=True):
-            col_b, col_btn = st.columns([3, 1])
-            with col_b:
-                st.markdown(f"**{i}게임**")
-                render_balls(nums)
-            with col_btn:
-                if st.button("💾 개별저장", key=f"single_save_{i}_{nums}"):
-                    group_ticket = {
-                        "round": target_next_round,
-                        "title": f"단일 {i}게임",
-                        "games": [nums],
-                        "time": datetime.now().strftime("%m-%d %H:%M")
-                    }
-                    st.session_state.my_saved_groups.append(group_ticket)
-                    save_history_to_disk(st.session_state.my_saved_groups)
-                    st.success(f"{i}번 게임이 영구 저장되었습니다!")
-                    st.rerun()
+            st.markdown(f"**{i}게임**")
+            render_balls(nums)
