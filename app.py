@@ -5,23 +5,30 @@ import streamlit as st
 
 st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
 
+# 번호별 공식 로또 볼 색상 매핑
 def get_ball_color(num):
     if num <= 10:
-        return "#fbc400"
+        return "#fbc400"  # 노랑 (1~10)
     elif num <= 20:
-        return "#69c8f2"
+        return "#69c8f2"  # 파랑 (11~20)
     elif num <= 30:
-        return "#ff7272"
+        return "#ff7272"  # 빨강 (21~30)
     elif num <= 40:
-        return "#aaaaaa"
+        return "#aaaaaa"  # 회색 (31~40)
     else:
-        return "#b0d840"
+        return "#b0d840"  # 녹색 (41~45)
 
-def render_balls(numbers):
-    html = '<div style="display: flex; gap: 8px; justify-content: center; margin: 10px 0;">'
+def render_balls(numbers, bonus=None):
+    html = '<div style="display: flex; gap: 8px; justify-content: center; align-items: center; margin: 10px 0;">'
     for n in sorted(numbers):
         color = get_ball_color(n)
         html += f'<div style="background-color: {color}; color: white; font-weight: bold; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{n}</div>'
+    
+    if bonus:
+        html += '<div style="font-size: 20px; font-weight: bold; color: #888; margin: 0 4px;">+</div>'
+        b_color = get_ball_color(bonus)
+        html += f'<div style="background-color: {b_color}; color: white; font-weight: bold; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{bonus}</div>'
+        
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
@@ -35,45 +42,65 @@ def load_lotto_data():
     except Exception:
         pass
     return [
-        {"round": 1135, "numbers": [1, 6, 13, 19, 21, 33]},
-        {"round": 1134, "numbers": [3, 7, 9, 13, 19, 24]},
-        {"round": 1133, "numbers": [13, 14, 20, 28, 29, 34]},
-        {"round": 1132, "numbers": [6, 7, 19, 28, 34, 41]},
-        {"round": 1131, "numbers": [1, 2, 6, 14, 20, 40]},
-        {"round": 1130, "numbers": [15, 19, 21, 25, 27, 28]},
-        {"round": 1129, "numbers": [5, 10, 11, 17, 28, 34]},
-        {"round": 1128, "numbers": [1, 5, 8, 16, 28, 33]},
-        {"round": 1127, "numbers": [10, 15, 24, 30, 31, 37]},
-        {"round": 1126, "numbers": [4, 5, 9, 11, 37, 40]},
-        {"round": 1125, "numbers": [6, 14, 25, 33, 40, 44]},
-        {"round": 1124, "numbers": [3, 8, 17, 34, 39, 43]},
-        {"round": 1123, "numbers": [13, 19, 21, 24, 34, 35]},
-        {"round": 1122, "numbers": [13, 19, 21, 26, 37, 43]},
-        {"round": 1121, "numbers": [6, 24, 31, 32, 38, 44]},
-        {"round": 1120, "numbers": [2, 19, 26, 31, 38, 41]},
+        {"round": 1135, "numbers": [1, 6, 13, 19, 21, 33], "bonus": 4},
+        {"round": 1134, "numbers": [3, 7, 9, 13, 19, 24], "bonus": 23},
+        {"round": 1133, "numbers": [13, 14, 20, 28, 29, 34], "bonus": 41},
+        {"round": 1132, "numbers": [6, 7, 19, 28, 34, 41], "bonus": 5},
+        {"round": 1131, "numbers": [1, 2, 6, 14, 20, 40], "bonus": 31},
+        {"round": 1130, "numbers": [15, 19, 21, 25, 27, 28], "bonus": 40},
+        {"round": 1129, "numbers": [5, 10, 11, 17, 28, 34], "bonus": 22},
+        {"round": 1128, "numbers": [1, 5, 8, 16, 28, 33], "bonus": 45},
+        {"round": 1127, "numbers": [10, 15, 24, 30, 31, 37], "bonus": 3},
+        {"round": 1126, "numbers": [4, 5, 9, 11, 37, 40], "bonus": 7},
+        {"round": 1125, "numbers": [6, 14, 25, 33, 40, 44], "bonus": 30},
+        {"round": 1124, "numbers": [3, 8, 17, 34, 39, 43], "bonus": 10},
+        {"round": 1123, "numbers": [13, 19, 21, 24, 34, 35], "bonus": 26},
+        {"round": 1122, "numbers": [13, 19, 21, 26, 37, 43], "bonus": 29},
+        {"round": 1121, "numbers": [6, 24, 31, 32, 38, 44], "bonus": 8},
+        {"round": 1120, "numbers": [2, 19, 26, 31, 38, 41], "bonus": 35},
     ]
 
 # UI 메인
 st.title("🎰 맞춤 로또 번호 추출기")
-st.caption("원하는 회차 범위를 직접 지정해 패턴을 확인하고 번호를 뽑습니다.")
 
 data = load_lotto_data()
 
-# 1. 제외수 선택
+# 1. 최근 당첨 번호 카드 & 최근 10회차 당첨 번호 목록
+if data:
+    all_sorted = sorted(data, key=lambda x: x["round"], reverse=True)
+    latest = all_sorted[0]
+    l_round = latest["round"]
+    l_nums = latest.get("numbers") or [latest[f"drwtNo{i}"] for i in range(1, 7)]
+    l_bonus = latest.get("bonus") or latest.get("bnusNo")
+
+    with st.container(border=True):
+        st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 당첨 번호</div>", unsafe_allow_html=True)
+        render_balls(l_nums, l_bonus)
+        
+        # 최근 10회차 당첨 번호 확인
+        with st.expander("📜 최근 10회차 당첨 번호 전체 보기"):
+            for item in all_sorted[:10]:
+                r = item["round"]
+                nums = item.get("numbers") or [item[f"drwtNo{i}"] for i in range(1, 7)]
+                b = item.get("bonus") or item.get("bnusNo")
+                b_str = f" + 보너스 {b}" if b else ""
+                st.caption(f"**제 {r}회** : {sorted(nums)}{b_str}")
+
+# 2. 제외수 선택
 excluded_numbers = st.multiselect(
     "🚫 조합에서 제외할 번호 선택",
     options=list(range(1, 46)),
     placeholder="제외하고 싶은 번호를 터치해 선택하세요"
 )
 
-# 2. 분석 옵션 설정
+# 3. 분석 옵션 설정 (1~20회차 슬라이더)
 col1, col2 = st.columns(2)
 with col1:
-    recent_count = st.slider("분석할 최근 회차 수", min_value=1, max_value=50, value=10, step=1)
+    recent_count = st.slider("분석할 최근 회차 수", min_value=1, max_value=20, value=10, step=1)
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
-# 3. 전략 선택
+# 4. 전략 선택
 strategy = st.radio(
     "어떤 방식으로 번호를 뽑을까요?",
     [
@@ -84,7 +111,7 @@ strategy = st.radio(
     ]
 )
 
-# 최근 회차 데이터 동적 집계
+# 슬라이더 값에 맞춘 동적 데이터 집계
 sorted_items = sorted(data, key=lambda x: x["round"], reverse=True)[:recent_count]
 all_numbers = []
 for item in sorted_items:
@@ -93,7 +120,6 @@ for item in sorted_items:
 
 counts = Counter(all_numbers)
 
-# 제외수를 뺀 가용 번호 풀
 available_pool = [n for n in range(1, 46) if n not in excluded_numbers]
 ranked_available = sorted(available_pool, key=lambda x: counts.get(x, 0), reverse=True)
 
@@ -103,21 +129,19 @@ not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
 hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
 cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
 
-# 4. 실시간 회차 연동 통계 아코디언 (슬라이더 값 자동 반영)
-with st.expander(f"📊 최근 {recent_count}회차 출현 데이터 보기 (실시간 반영)", expanded=False):
+# 통계 아코디언 (실시간 회차 연동)
+with st.expander(f"📊 최근 {recent_count}회차 출현 통계 보기", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(f"**🔥 많이 나온 번호 (상위)**")
-        top_list = ranked_available[:6]
-        for num in top_list:
+        for num in ranked_available[:6]:
             st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
     with c2:
         st.markdown(f"**❄️ 안 나온 번호 (하위)**")
-        bottom_list = ranked_available[-6:]
-        for num in bottom_list:
+        for num in ranked_available[-6:]:
             st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
 
-# 번호 추출 버튼
+# 번호 생성 버튼
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
     if len(available_pool) < 6:
         st.error("제외된 번호가 너무 많아 6개 번호를 구성할 수 없습니다. 제외수를 줄여주세요.")
