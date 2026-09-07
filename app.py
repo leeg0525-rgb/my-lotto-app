@@ -5,18 +5,17 @@ import streamlit as st
 
 st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
 
-# 번호별 공식 로또 볼 색상 매핑
 def get_ball_color(num):
     if num <= 10:
-        return "#fbc400"  # 노랑 (1~10)
+        return "#fbc400"
     elif num <= 20:
-        return "#69c8f2"  # 파랑 (11~20)
+        return "#69c8f2"
     elif num <= 30:
-        return "#ff7272"  # 빨강 (21~30)
+        return "#ff7272"
     elif num <= 40:
-        return "#aaaaaa"  # 회색 (31~40)
+        return "#aaaaaa"
     else:
-        return "#b0d840"  # 녹색 (41~45)
+        return "#b0d840"
 
 def render_balls(numbers, bonus=None):
     html = '<div style="display: flex; gap: 8px; justify-content: center; align-items: center; margin: 10px 0;">'
@@ -32,58 +31,82 @@ def render_balls(numbers, bonus=None):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600)
+# 100회차 이상의 전체 실제 당첨 데이터 불러오기 (캐싱 6시간)
+@st.cache_data(ttl=21600)
 def load_lotto_data():
-    url = "https://raw.githubusercontent.com/jonghwan-park/lotto-history/main/data.json"
+    """안정적인 공개 로또 데이터셋 로드"""
+    url_list = [
+        "https://raw.githubusercontent.com/lee-gook/lotto-data/main/lotto.json",
+        "https://raw.githubusercontent.com/seose/lotto/main/lotto.json",
+        "https://raw.githubusercontent.com/jonghwan-park/lotto-history/main/data.json"
+    ]
+    for url in url_list:
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                raw = res.json()
+                data_list = []
+                # 리스트 또는 딕셔너리 포맷 정규화
+                items = raw if isinstance(raw, list) else list(raw.values())
+                for item in items:
+                    r = item.get("round") or item.get("drwNo")
+                    if not r:
+                        continue
+                    nums = item.get("numbers") or [item[f"drwtNo{i}"] for i in range(1, 7) if f"drwtNo{i}" in item]
+                    b = item.get("bonus") or item.get("bnusNo")
+                    if len(nums) == 6:
+                        data_list.append({"round": int(r), "numbers": [int(x) for x in nums], "bonus": int(b) if b else None})
+                if len(data_list) >= 50:
+                    return sorted(data_list, key=lambda x: x["round"], reverse=True)
+        except Exception:
+            continue
+
+    # 백업: 동행복권 API에서 최신 100회차 역순 크롤링
     try:
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            return res.json()
+        # 기준 최신 회차 추정 (1140회 기준)
+        base_round = 1140
+        fetched = []
+        for r in range(base_round, base_round - 100, -1):
+            api_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={r}"
+            res = requests.get(api_url, timeout=3)
+            if res.status_code == 200:
+                d = res.json()
+                if d.get("returnValue") == "success":
+                    nums = [d[f"drwtNo{i}"] for i in range(1, 7)]
+                    fetched.append({"round": r, "numbers": nums, "bonus": d.get("bnusNo")})
+        if fetched:
+            return fetched
     except Exception:
         pass
-    return [
-        {"round": 1135, "numbers": [1, 6, 13, 19, 21, 33], "bonus": 4},
-        {"round": 1134, "numbers": [3, 7, 9, 13, 19, 24], "bonus": 23},
-        {"round": 1133, "numbers": [13, 14, 20, 28, 29, 34], "bonus": 41},
-        {"round": 1132, "numbers": [6, 7, 19, 28, 34, 41], "bonus": 5},
-        {"round": 1131, "numbers": [1, 2, 6, 14, 20, 40], "bonus": 31},
-        {"round": 1130, "numbers": [15, 19, 21, 25, 27, 28], "bonus": 40},
-        {"round": 1129, "numbers": [5, 10, 11, 17, 28, 34], "bonus": 22},
-        {"round": 1128, "numbers": [1, 5, 8, 16, 28, 33], "bonus": 45},
-        {"round": 1127, "numbers": [10, 15, 24, 30, 31, 37], "bonus": 3},
-        {"round": 1126, "numbers": [4, 5, 9, 11, 37, 40], "bonus": 7},
-        {"round": 1125, "numbers": [6, 14, 25, 33, 40, 44], "bonus": 30},
-        {"round": 1124, "numbers": [3, 8, 17, 34, 39, 43], "bonus": 10},
-        {"round": 1123, "numbers": [13, 19, 21, 24, 34, 35], "bonus": 26},
-        {"round": 1122, "numbers": [13, 19, 21, 26, 37, 43], "bonus": 29},
-        {"round": 1121, "numbers": [6, 24, 31, 32, 38, 44], "bonus": 8},
-        {"round": 1120, "numbers": [2, 19, 26, 31, 38, 41], "bonus": 35},
-    ]
 
-# UI 메인
+    return []
+
 st.title("🎰 맞춤 로또 번호 추출기")
 
 data = load_lotto_data()
 
-# 1. 최근 당첨 번호 카드 & 최근 10회차 당첨 번호 목록
-if data:
-    all_sorted = sorted(data, key=lambda x: x["round"], reverse=True)
-    latest = all_sorted[0]
-    l_round = latest["round"]
-    l_nums = latest.get("numbers") or [latest[f"drwtNo{i}"] for i in range(1, 7)]
-    l_bonus = latest.get("bonus") or latest.get("bnusNo")
+# 데이터 로드 실패 방지
+if not data:
+    st.error("당첨 데이터를 불러오는 중입니다. 잠시 후 새로고침해 주세요.")
+    st.stop()
 
-    with st.container(border=True):
-        st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 당첨 번호</div>", unsafe_allow_html=True)
-        render_balls(l_nums, l_bonus)
-        
-        with st.expander("📜 최근 10회차 당첨 번호 전체 보기"):
-            for item in all_sorted[:10]:
-                r = item["round"]
-                nums = item.get("numbers") or [item[f"drwtNo{i}"] for i in range(1, 7)]
-                b = item.get("bonus") or item.get("bnusNo")
-                b_str = f" + 보너스 {b}" if b else ""
-                st.caption(f"**제 {r}회** : {sorted(nums)}{b_str}")
+# 1. 최근 당첨 번호 표시
+latest = data[0]
+l_round = latest["round"]
+l_nums = latest["numbers"]
+l_bonus = latest.get("bonus")
+
+with st.container(border=True):
+    st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 당첨 번호</div>", unsafe_allow_html=True)
+    render_balls(l_nums, l_bonus)
+    
+    with st.expander("📜 최근 10회차 당첨 번호 전체 보기"):
+        for item in data[:10]:
+            r = item["round"]
+            nums = item["numbers"]
+            b = item.get("bonus")
+            b_str = f" + 보너스 {b}" if b else ""
+            st.caption(f"**제 {r}회** : {sorted(nums)}{b_str}")
 
 # 2. 제외수 선택
 excluded_numbers = st.multiselect(
@@ -92,10 +115,11 @@ excluded_numbers = st.multiselect(
     placeholder="제외하고 싶은 번호를 터치해 선택하세요"
 )
 
-# 3. 분석 및 생성 설정 (1~100회차 지원)
+# 3. 분석 옵션 설정
+max_available = min(100, len(data))
 col1, col2 = st.columns(2)
 with col1:
-    recent_count = st.slider("추출에 반영할 최근 회차 수", min_value=1, max_value=100, value=10, step=1)
+    recent_count = st.slider("추출에 반영할 최근 회차 수", min_value=1, max_value=max_available, value=min(10, max_available), step=1)
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
@@ -110,37 +134,35 @@ strategy = st.radio(
     ]
 )
 
-# 5. 통계 조회 전용 섹션 (1~100회차 자유 설정 및 실시간 연동)
+# 5. 통계 조회 전용 섹션 (실제 1~100회차 연동)
 with st.expander("📊 회차별 출현 통계 실시간 조회", expanded=False):
-    stat_range = st.slider("조회할 최근 회차 범위 (1~100회)", min_value=1, max_value=100, value=recent_count, step=1, key="stat_slider")
+    stat_range = st.slider("조회할 최근 회차 범위 (1~100회)", min_value=1, max_value=max_available, value=recent_count, step=1, key="stat_slider")
     
-    # 선택된 stat_range 기준으로 실시간 집계
-    stat_sorted = sorted(data, key=lambda x: x["round"], reverse=True)[:stat_range]
+    # 선택 회차 기준으로 카운팅
+    stat_subset = data[:stat_range]
     stat_nums = []
-    for item in stat_sorted:
-        nums = item.get("numbers") or [item[f"drwtNo{i}"] for i in range(1, 7)]
-        stat_nums.extend(nums)
+    for item in stat_subset:
+        stat_nums.extend(item["numbers"])
     
     stat_counts = Counter(stat_nums)
     stat_ranked = sorted(range(1, 46), key=lambda x: stat_counts.get(x, 0), reverse=True)
     
-    st.caption(f"💡 최근 **{stat_range}회차** 동안의 출현 빈도 순위입니다.")
+    st.caption(f"💡 최근 **{stat_range}회차**(제 {stat_subset[-1]['round']}회 ~ 제 {stat_subset[0]['round']}회) 집계 결과입니다.")
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**🔥 많이 나온 번호 (상위)**")
+        st.markdown("**🔥 많이 나온 번호 (상위 6개)**")
         for num in stat_ranked[:6]:
             st.write(f"- **{num}번** ({stat_counts.get(num, 0)}회 출현)")
     with c2:
-        st.markdown("**❄️ 안 나온 번호 (하위)**")
+        st.markdown("**❄️ 안 나온 번호 (하위 6개)**")
         for num in stat_ranked[-6:]:
             st.write(f"- **{num}번** ({stat_counts.get(num, 0)}회 출현)")
 
-# 추천 번호 생성용 데이터 집계 (recent_count 기준)
-sorted_items = sorted(data, key=lambda x: x["round"], reverse=True)[:recent_count]
+# 추천 번호 생성용 계산
+extract_subset = data[:recent_count]
 all_numbers = []
-for item in sorted_items:
-    nums = item.get("numbers") or [item[f"drwtNo{i}"] for i in range(1, 7)]
-    all_numbers.extend(nums)
+for item in extract_subset:
+    all_numbers.extend(item["numbers"])
 
 counts = Counter(all_numbers)
 available_pool = [n for n in range(1, 46) if n not in excluded_numbers]
@@ -152,7 +174,7 @@ not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
 hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
 cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
 
-# 번호 생성 버튼
+# 추천 번호 뽑기
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
     if len(available_pool) < 6:
         st.error("제외된 번호가 너무 많아 6개 번호를 구성할 수 없습니다. 제외수를 줄여주세요.")
