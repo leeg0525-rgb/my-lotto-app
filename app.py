@@ -1,38 +1,25 @@
 from collections import Counter
 import csv
-from datetime import datetime
 import os
 import random
-import time
-from bs4 import BeautifulSoup
-import requests
 import streamlit as st
 
 st.set_page_config(
     page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered"
 )
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_FILE = os.path.join(BASE_DIR, "naver_real_lotto.csv")
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
-        " like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
-}
-
 
 def get_ball_color(num):
     if num <= 10:
-        return "#fbc400"  # 노랑 (1~10)
+        return "#fbc400"  # 노랑
     elif num <= 20:
-        return "#69c8f2"  # 파랑 (11~20)
+        return "#69c8f2"  # 파랑
     elif num <= 30:
-        return "#ff7272"  # 빨강 (21~30)
+        return "#ff7272"  # 빨강
     elif num <= 40:
-        return "#aaaaaa"  # 회색 (31~40)
+        return "#aaaaaa"  # 회색
     else:
-        return "#b0d840"  # 녹색 (41~45)
+        return "#b0d840"  # 녹색
 
 
 def render_balls(numbers, bonus=None):
@@ -40,34 +27,22 @@ def render_balls(numbers, bonus=None):
     for n in sorted(numbers):
         color = get_ball_color(n)
         html += f'<div style="background-color: {color}; color: white; font-weight: bold; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{n}</div>'
-
     if bonus:
         html += '<div style="font-size: 20px; font-weight: bold; color: #888; margin: 0 4px;">+</div>'
         b_color = get_ball_color(bonus)
         html += f'<div style="background-color: {b_color}; color: white; font-weight: bold; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{bonus}</div>'
-
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
 
-# 1회차(2002-12-07 20:45) 기준 최신 회차 계산
-def get_estimated_latest_drw():
-    first_drw_date = datetime(2002, 12, 7, 20, 45)
-    diff_days = (datetime.now() - first_drw_date).days
-    return (diff_days // 7) + 1
+# GitHub 저장소에 올라온 실제 CSV 파일 읽기
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_FILE = os.path.join(BASE_DIR, "real_lotto_100.csv")
 
 
-# 네이버에서 실제 100회차 수집 및 로컬 CSV 캐싱
-@st.cache_data(
-    show_spinner=(
-        "네이버에서 실제 공인 로또 데이터를 수집 중입니다... (최초 1회만"
-        " 소요)"
-    )
-)
-def load_and_sync_naver_data(count=100):
+@st.cache_data
+def load_lotto_data():
     records = []
-
-    # 1. 이미 저장된 네이버 실제 데이터 파일이 있으면 바로 로드
     if os.path.exists(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8-sig") as f:
             reader = list(csv.reader(f))
@@ -83,67 +58,18 @@ def load_and_sync_naver_data(count=100):
                         )
                     except Exception:
                         continue
-
-    # 파일에 50개 이상 있으면 그대로 사용
-    if len(records) >= 50:
-        records.sort(key=lambda x: x["round"], reverse=True)
-        return records[:count]
-
-    # 2. 파일이 없으면 네이버 검색 결과에서 직접 100개 회차 파싱
-    latest_drw = get_estimated_latest_drw()
-    start_drw = max(1, latest_drw - count + 1)
-    session = requests.Session()
-    session.headers.update(HEADERS)
-
-    for drw in range(latest_drw, start_drw - 1, -1):
-        url = f"https://search.naver.com/search.naver?query={drw}회로또"
-        try:
-            res = session.get(url, timeout=3)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, "html.parser")
-                num_box = soup.select("div.num_box")
-                if num_box:
-                    balls = num_box[0].select("span.ball")
-                    nums = [
-                        int(b.text.strip())
-                        for b in balls
-                        if b.text.strip().isdigit()
-                    ]
-                    if len(nums) >= 7:
-                        records.append(
-                            {
-                                "round": drw,
-                                "numbers": nums[:6],
-                                "bonus": nums[6],
-                            }
-                        )
-        except Exception:
-            pass
-        time.sleep(0.04)
-
     records.sort(key=lambda x: x["round"], reverse=True)
-
-    # 3. CSV로 저장하여 다음 실행 시 0초 로딩 보장
-    if records:
-        with open(CSV_FILE, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                ["회차", "번호1", "번호2", "번호3", "번호4", "번호5", "번호6", "보너스"]
-            )
-            for r in records:
-                writer.writerow([r["round"], *r["numbers"], r["bonus"]])
-
-    return records[:count]
+    return records
 
 
-# ================= UI 화면 =================
 st.title("🎰 맞춤 로또 번호 추출기")
 
-data = load_and_sync_naver_data(count=100)
+data = load_lotto_data()
 
 if not data:
     st.error(
-        "네이버 로또 데이터를 불러올 수 없습니다. 네트워크 연결 상태를 확인해 주세요."
+        "저장소에 'real_lotto_100.csv' 파일이 없습니다. GitHub에 파일을"
+        " 업로드해주세요."
     )
     st.stop()
 
@@ -155,7 +81,7 @@ l_bonus = latest.get("bonus")
 
 with st.container(border=True):
     st.markdown(
-        f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 실제 네이버 발표 번호</div>",
+        f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {l_round}회) 당첨 번호</div>",
         unsafe_allow_html=True,
     )
     render_balls(l_nums, l_bonus)
@@ -264,7 +190,8 @@ cold_pool = (
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
     if len(available_pool) < 6:
         st.error(
-            "제외된 번호가 너무 많아 6개 번호를 구성할 수 없습니다. 제외수를 줄여주세요."
+            "제외된 번호가 너무 많아 6개 번호를 구성할 수 없습니다. 제외수를"
+            " 줄여주세요."
         )
     else:
         st.subheader("🎯 생성된 추천 번호")
