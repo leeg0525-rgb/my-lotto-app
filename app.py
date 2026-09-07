@@ -1,5 +1,8 @@
 from collections import Counter
+from datetime import datetime
+import json
 import random
+import urllib.request
 import streamlit as st
 
 st.set_page_config(
@@ -9,15 +12,15 @@ st.set_page_config(
 
 def get_ball_color(num):
     if num <= 10:
-        return "#fbc400"  # 노랑 (1~10)
+        return "#fbc400"
     elif num <= 20:
-        return "#69c8f2"  # 파랑 (11~20)
+        return "#69c8f2"
     elif num <= 30:
-        return "#ff7272"  # 빨강 (21~30)
+        return "#ff7272"
     elif num <= 40:
-        return "#aaaaaa"  # 회색 (31~40)
+        return "#aaaaaa"
     else:
-        return "#b0d840"  # 녹색 (41~45)
+        return "#b0d840"
 
 
 def render_balls(numbers, bonus=None):
@@ -25,18 +28,16 @@ def render_balls(numbers, bonus=None):
     for n in sorted(numbers):
         color = get_ball_color(n)
         html += f'<div style="background-color: {color}; color: white; font-weight: bold; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{n}</div>'
-
     if bonus:
         html += '<div style="font-size: 20px; font-weight: bold; color: #888; margin: 0 4px;">+</div>'
         b_color = get_ball_color(bonus)
         html += f'<div style="background-color: {b_color}; color: white; font-weight: bold; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{bonus}</div>'
-
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
 
-# 동행복권 공식 엑셀에서 추출한 실제 100회차 당첨 번호 (1240회 ~ 1141회)
-OFFICIAL_DATA = [
+# 동행복권 공식 엑셀 추출 기본 100회차 (1240회 ~ 1141회)
+BASE_DATA = [
     (1240, [11, 13, 19, 20, 31, 44], 27),
     (1239, [11, 13, 22, 32, 33, 36], 8),
     (1238, [2, 13, 18, 32, 38, 42], 22),
@@ -139,12 +140,59 @@ OFFICIAL_DATA = [
     (1141, [7, 11, 12, 21, 26, 35], 20),
 ]
 
-data = [{"round": r, "numbers": nums, "bonus": b} for r, nums, b in OFFICIAL_DATA]
+
+# 오늘 날짜 기준 최신 예상 회차 계산
+def get_current_max_drw():
+    first_drw_date = datetime(2002, 12, 7, 20, 45)
+    diff_days = (datetime.now() - first_drw_date).days
+    return (diff_days // 7) + 1
+
+
+# 1회차씩 가볍게 단건 조회
+def fetch_single_drw(drw_no):
+    url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw_no}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            d = json.loads(resp.read().decode("utf-8"))
+            if d.get("returnValue") == "success":
+                return (
+                    d["drwNo"],
+                    [d[f"drwtNo{i}"] for i in range(1, 7)],
+                    d.get("bnusNo"),
+                )
+    except Exception:
+        pass
+    return None
+
+
+# 30분 주기로 최신 회차만 가볍게 확인하여 덧붙임
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_updated_lotto_data():
+    data_list = list(BASE_DATA)
+    last_known = data_list[0][0]  # 내장된 최고 회차 (1240회)
+    expected_drw = get_current_max_drw()
+
+    # 내장된 회차 이후 새 회차가 나왔는지 확인 (예: 1241회부터)
+    if expected_drw > last_known:
+        for check_drw in range(last_known + 1, expected_drw + 1):
+            new_item = fetch_single_drw(check_drw)
+            if new_item:
+                data_list.insert(0, new_item)  # 맨 위에 새 회차 덧붙이기
+            else:
+                break
+
+    return [
+        {"round": r, "numbers": nums, "bonus": b}
+        for r, nums, b in data_list[:100]
+    ]
+
+
+data = get_updated_lotto_data()
 
 # ================= UI 화면 =================
 st.title("🎰 맞춤 로또 번호 추출기")
 
-# 1. 최신 당첨 번호 카드
 latest = data[0]
 l_round = latest["round"]
 l_nums = latest["numbers"]
@@ -165,14 +213,12 @@ with st.container(border=True):
             b_str = f" + 보너스 {b}" if b else ""
             st.caption(f"**제 {r}회** : {sorted(nums)}{b_str}")
 
-# 2. 제외수 선택
 excluded_numbers = st.multiselect(
     "🚫 조합에서 제외할 번호 선택",
     options=list(range(1, 46)),
     placeholder="제외하고 싶은 번호를 터치해 선택하세요",
 )
 
-# 3. 분석 및 생성 설정 (1~100회차 완벽 지원)
 max_available = len(data)
 col1, col2 = st.columns(2)
 with col1:
@@ -186,7 +232,6 @@ with col1:
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
-# 4. 전략 선택
 strategy = st.radio(
     "어떤 방식으로 번호를 뽑을까요?",
     [
@@ -197,7 +242,6 @@ strategy = st.radio(
     ],
 )
 
-# 5. 통계 조회 섹션 (1~100회차 실시간 연동)
 with st.expander("📊 회차별 출현 통계 실시간 조회", expanded=False):
     stat_range = st.slider(
         f"조회할 최근 회차 범위 (1~{max_available}회)",
@@ -231,7 +275,6 @@ with st.expander("📊 회차별 출현 통계 실시간 조회", expanded=False
         for num in stat_ranked[-6:]:
             st.write(f"- **{num}번** ({stat_counts.get(num, 0)}회 출현)")
 
-# 추천 번호 생성 계산
 extract_subset = data[:recent_count]
 all_numbers = []
 for item in extract_subset:
@@ -257,7 +300,6 @@ cold_pool = (
     else ranked_available[-max(6, len(ranked_available)) :]
 )
 
-# 추천 번호 생성 버튼
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
     if len(available_pool) < 6:
         st.error(
