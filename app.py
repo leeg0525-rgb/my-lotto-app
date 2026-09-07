@@ -5,18 +5,17 @@ import streamlit as st
 
 st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
 
-# 번호별 공식 로또 볼 색상 매핑
 def get_ball_color(num):
     if num <= 10:
-        return "#fbc400"  # 노랑 (1~10)
+        return "#fbc400"
     elif num <= 20:
-        return "#69c8f2"  # 파랑 (11~20)
+        return "#69c8f2"
     elif num <= 30:
-        return "#ff7272"  # 빨강 (21~30)
+        return "#ff7272"
     elif num <= 40:
-        return "#aaaaaa"  # 회색 (31~40)
+        return "#aaaaaa"
     else:
-        return "#b0d840"  # 녹색 (41~45)
+        return "#b0d840"
 
 def render_balls(numbers):
     html = '<div style="display: flex; gap: 8px; justify-content: center; margin: 10px 0;">'
@@ -28,7 +27,6 @@ def render_balls(numbers):
 
 @st.cache_data(ttl=3600)
 def load_lotto_data():
-    """당첨 데이터 로드 (1시간 캐싱)"""
     url = "https://raw.githubusercontent.com/jonghwan-park/lotto-history/main/data.json"
     try:
         res = requests.get(url, timeout=5)
@@ -55,9 +53,9 @@ def load_lotto_data():
         {"round": 1120, "numbers": [2, 19, 26, 31, 38, 41]},
     ]
 
-# --- UI 메인 ---
+# UI 메인
 st.title("🎰 맞춤 로또 번호 추출기")
-st.caption("제외할 번호를 지정하고 최근 회차 출현 패턴에 맞춘 나만의 추천 번호를 생성합니다.")
+st.caption("원하는 회차 범위를 직접 지정해 패턴을 확인하고 번호를 뽑습니다.")
 
 data = load_lotto_data()
 
@@ -71,11 +69,11 @@ excluded_numbers = st.multiselect(
 # 2. 분석 옵션 설정
 col1, col2 = st.columns(2)
 with col1:
-    recent_count = st.slider("분석할 최근 회차", min_value=3, max_value=50, value=3, step=1)
+    recent_count = st.slider("분석할 최근 회차 수", min_value=1, max_value=50, value=10, step=1)
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
-# 3. 이해하기 쉬운 전략 선택
+# 3. 전략 선택
 strategy = st.radio(
     "어떤 방식으로 번호를 뽑을까요?",
     [
@@ -86,7 +84,7 @@ strategy = st.radio(
     ]
 )
 
-# 당첨 데이터 집계
+# 최근 회차 데이터 동적 집계
 sorted_items = sorted(data, key=lambda x: x["round"], reverse=True)[:recent_count]
 all_numbers = []
 for item in sorted_items:
@@ -105,17 +103,19 @@ not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
 hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
 cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
 
-# 상세 통계 접기/펼치기
-with st.expander(f"📊 최근 {recent_count}회차 출현 데이터 보기"):
+# 4. 실시간 회차 연동 통계 아코디언 (슬라이더 값 자동 반영)
+with st.expander(f"📊 최근 {recent_count}회차 출현 데이터 보기 (실시간 반영)", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**🔥 많이 나온 번호**")
-        for num in ranked_available[:5]:
-            st.write(f"- {num}번 ({counts.get(num, 0)}회 출현)")
+        st.markdown(f"**🔥 많이 나온 번호 (상위)**")
+        top_list = ranked_available[:6]
+        for num in top_list:
+            st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
     with c2:
-        st.markdown("**❄️ 안 나온 번호**")
-        for num in ranked_available[-5:]:
-            st.write(f"- {num}번 ({counts.get(num, 0)}회 출현)")
+        st.markdown(f"**❄️ 안 나온 번호 (하위)**")
+        bottom_list = ranked_available[-6:]
+        for num in bottom_list:
+            st.write(f"- **{num}번** ({counts.get(num, 0)}회 출현)")
 
 # 번호 추출 버튼
 if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primary"):
