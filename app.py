@@ -1,13 +1,18 @@
 from collections import Counter
+import json
 import random
 import re
-import cv2
-import numpy as np
+from google import genai
+from google.genai import types
 from PIL import Image
 import requests
 import streamlit as st
 
 st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
+
+# --- 설정: Gemini API 키 입력 ---
+# Streamlit Secrets(보안)에 넣거나, 여기에 직접 문자열로 넣으실 수 있습니다.
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "여기에_발급받은_GEMINI_API_키_입력")
 
 def get_ball_color(num):
     if num <= 10:
@@ -29,58 +34,36 @@ def render_balls(numbers):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-# QR 데이터 및 임의의 텍스트에서 1~45 로또 번호 추출
-def extract_numbers_from_qr_or_text(text):
-    if not text:
-        return []
-    
-    extracted = set()
-    
-    # 1. 동행복권 공식 QR 규격 포맷 (v=회차q게임1q게임2...)
-    if "v=" in text or "method=winQr" in text or "q" in text:
-        match = re.search(r'v=([0-9a-zA-Z]+)', text)
-        raw_val = match.group(1) if match else text.strip()
-        parts = raw_val.split('q')[1:]  # 회차 제외
-        for p in parts:
-            if len(p) >= 12:
-                game_str = p[:12]
-                for i in range(0, 12, 2):
-                    try:
-                        n = int(game_str[i:i+2])
-                        if 1 <= n <= 45:
-                            extracted.add(n)
-                    except ValueError:
-                        pass
-        if extracted:
-            return sorted(list(extracted))
-            
-    # 2. 사용자가 그냥 띄어쓰기나 쉼표로 숫자를 막 적은 경우
-    found = re.findall(r'\b\d{1,2}\b', text)
-    for f in found:
-        n = int(f)
-        if 1 <= n <= 45:
-            extracted.add(n)
-            
-    return sorted(list(extracted))
-
-# 카메라로 찍은 이미지에서 QR 읽기 (OpenCV 활용)
-def read_qr_from_image(image_file):
+# AI 시각 판독 함수 (Gemini Flash 사용)
+def read_lotto_numbers_with_ai(image_file):
     try:
-        image = Image.open(image_file)
-        img_np = np.array(image)
-        # BGR 변환
-        if len(img_np.shape) == 3 and img_np.shape[2] == 3:
-            img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        img = Image.open(image_file)
         
-        detector = cv2.QRCodeDetector()
-        data, bbox, _ = detector.detectAndDecode(img_np)
-        return data if data else None
-    except Exception:
-        return None
+        prompt = """
+        이 사진은 한국 로또 6/45 복권 용지입니다.
+        용지에 인쇄된 게임별(A, B, C, D, E 등) 6자리 로또 번호들을 모두 찾아서 읽어주세요.
+        결과는 오직 1부터 45 사이의 정수들이 들어있는 단일 JSON 숫자 배열 형식으로만 응답하세요.
+        예: [3, 11, 14, 18, 22, 35, 7, 12, ...]
+        추가 텍스트나 마크다운 서식(```json 등) 없이 순수 JSON 배열만 출력하세요.
+        """
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt, img]
+        )
+        
+        # 숫자 파싱
+        cleaned = re.sub(r'[^0-9,]', '', response.text)
+        nums = [int(n) for n in cleaned.split(',') if n.isdigit() and 1 <= int(n) <= 45]
+        return sorted(list(set(nums)))
+    except Exception as e:
+        st.error(f"AI 이미지 판독 중 오류 발생: {e}")
+        return []
 
 @st.cache_data(ttl=3600)
 def load_lotto_data():
-    url = "https://raw.githubusercontent.com/jonghwan-park/lotto-history/main/data.json"
+    url = "[https://raw.githubusercontent.com/jonghwan-park/lotto-history/main/data.json](https://raw.githubusercontent.com/jonghwan-park/lotto-history/main/data.json)"
     try:
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
@@ -91,49 +74,54 @@ def load_lotto_data():
 
 # --- UI 메인 ---
 st.title("🎰 맞춤 로또 번호 추출기")
-st.caption("방금 산 영수증 QR을 찍거나 번호를 입력하면, 그 번호들을 싹 빼고 새로 뽑아줍니다.")
+st.caption("로또 용지 사진을 올리면 AI가 번호를 시각적으로 읽어 제외하고 새로 번호를 뽑아줍니다.")
 
 data = load_lotto_data()
 
-# 번호 간편 제외 섹션
-with st.expander("📷 구매한 로또 번호 간편 제외 (QR 촬영 / 직접 입력)", expanded=True):
-    tab1, tab2 = st.tabs(["📸 카메라로 QR 찍기", "✍️ 숫자 편하게 적기"])
-    
-    auto_excluded = []
-    
+# 세션 상태로 제외 번호 관리
+if "excluded_nums" not in st.session_state:
+    st.session_state.excluded_nums = []
+
+with st.expander("📷 로또 용지 사진으로 번호 판독하기", expanded=True):
+    tab1, tab2 = st.tabs(["📁 앨범에서 사진 선택", "📸 카메라로 직접 촬영"])
+    uploaded_file = None
     with tab1:
-        st.caption("로또 용지 상단의 네모난 QR 코드를 비춰서 사진을 찍으세요.")
-        camera_img = st.camera_input("로또 QR 코드 촬영", label_visibility="collapsed")
-        if camera_img:
-            qr_data = read_qr_from_image(camera_img)
-            if qr_data:
-                auto_excluded = extract_numbers_from_qr_or_text(qr_data)
-                if auto_excluded:
-                    st.success(f"🎉 QR 인식 성공! {len(auto_excluded)}개 번호가 자동 제외됩니다.")
-                else:
-                    st.warning("QR은 인식되었으나 번호 데이터를 찾지 못했습니다.")
-            else:
-                st.error("QR 코드를 찾지 못했습니다. 조금 더 가깝고 밝게 다시 찍어보세요.")
-                
+        img_upload = st.file_uploader("로또 용지 사진 첨부", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
+        if img_upload:
+            uploaded_file = img_upload
     with tab2:
-        st.caption("복잡한 기호 없이 '1 5 13 22 35 44' 처럼 숫자만 띄어서 적으면 됩니다.")
-        raw_text = st.text_area("제외할 번호 입력", placeholder="예: 3 14 20 28 29 34 7 11 19...", height=80)
-        if raw_text:
-            text_excluded = extract_numbers_from_qr_or_text(raw_text)
-            if text_excluded:
-                auto_excluded = sorted(list(set(auto_excluded + text_excluded)))
+        cam_upload = st.camera_input("로또 용지 촬영", label_visibility="collapsed")
+        if cam_upload:
+            uploaded_file = cam_upload
 
-    if auto_excluded:
-        st.info(f"🚫 현재 제외 적용된 번호: {auto_excluded}")
+    if uploaded_file:
+        st.image(uploaded_file, caption="선택된 영수증 사진", width=250)
+        if st.button("🔍 AI로 사진 속 번호 읽기"):
+            with st.spinner("AI가 용지 속 로또 번호를 읽는 중입니다..."):
+                found_nums = read_lotto_numbers_with_ai(uploaded_file)
+                if found_nums:
+                    st.session_state.excluded_nums = found_nums
+                    st.success(f"총 {len(found_nums)}개 번호 판독 완료!")
+                else:
+                    st.warning("번호를 찾지 못했습니다. 사진을 밝고 선명하게 다시 올려주세요.")
 
-# 옵션 설정
+# 판독된 제외 번호 확인 및 수동 추가
+auto_excluded = st.session_state.excluded_nums
+manual_excluded = st.multiselect(
+    "🚫 제외할 번호 목록 (AI 판독 결과 및 수동 추가)",
+    options=list(range(1, 46)),
+    default=auto_excluded
+)
+total_excluded = set(manual_excluded)
+
+# 분석 설정
 col1, col2 = st.columns(2)
 with col1:
     recent_count = st.slider("분석할 최근 회차", min_value=3, max_value=50, value=3, step=1)
 with col2:
     game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5)
 
-# 알기 쉬운 전략 선택
+# 전략 선택
 strategy = st.radio(
     "어떤 방식으로 번호를 뽑을까요?",
     [
@@ -144,7 +132,7 @@ strategy = st.radio(
     ]
 )
 
-# 데이터 집계 및 번호 추출 로직
+# 데이터 계산
 sorted_items = sorted(data, key=lambda x: x["round"], reverse=True)[:recent_count]
 all_numbers = []
 for item in sorted_items:
@@ -152,7 +140,7 @@ for item in sorted_items:
     all_numbers.extend(nums)
 
 counts = Counter(all_numbers)
-available_pool = [n for n in range(1, 46) if n not in auto_excluded]
+available_pool = [n for n in range(1, 46) if n not in total_excluded]
 ranked_available = sorted(available_pool, key=lambda x: counts.get(x, 0), reverse=True)
 
 appeared_nums = [n for n in ranked_available if counts.get(n, 0) > 0]
