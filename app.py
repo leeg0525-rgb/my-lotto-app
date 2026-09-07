@@ -60,24 +60,31 @@ def load_lotto_data():
 
 # --- UI 화면 ---
 st.title("🎰 맞춤형 전략 로또 분석기")
-st.caption("최근 당첨 데이터를 기반으로 원하는 전략별 추천 번호를 추출합니다.")
+st.caption("최근 당첨 데이터를 기반으로 제외수 필터 및 전략별 번호를 추출합니다.")
 
 data = load_lotto_data()
 
-# 옵션 설정 (최소 3회차부터 슬라이더 지원)
+# 1. 회차 및 게임 수 옵션 설정
 col1, col2 = st.columns(2)
 with col1:
     recent_count = st.slider("분석 회차 수", min_value=3, max_value=50, value=3, step=1)
 with col2:
     game_count = st.slider("생성 게임 수", min_value=1, max_value=10, value=5)
 
-# 전략 선택
+# 2. 제외수 설정
+excluded_numbers = st.multiselect(
+    "🚫 조합에서 제외할 번호 선택",
+    options=list(range(1, 46)),
+    placeholder="제외하고 싶은 번호를 선택하세요"
+)
+
+# 3. 전략 선택
 strategy = st.radio(
     "추천 전략 선택",
     [
+        "🔥 핫 넘버 전용 (제외수 뺀 자주 나온 번호 위주)",
         "⚡ 믹스 조합 (핫 3개 + 콜드 3개)",
-        "🔥 핫 넘버 전용 (자주 나온 번호 위주)",
-        "❄️ 콜드 넘버 전용 (안 나온 번호 위주)",
+        "❄️ 콜드 넘버 전용 (제외수 뺀 안 나온 번호 위주)",
         "🎲 전체 가중치 랜덤 (출현 빈도 비례 추첨)"
     ]
 )
@@ -91,63 +98,81 @@ for item in sorted_items:
 
 counts = Counter(all_numbers)
 
-# 1~45번 전체 빈도 정렬 (출현 횟수 기준 내림차순)
-ranked_by_freq = sorted(range(1, 46), key=lambda x: counts.get(x, 0), reverse=True)
+# 1~45번 중 제외 번호를 뺀 사용 가능한 전체 번호 풀
+available_pool = [n for n in range(1, 46) if n not in excluded_numbers]
 
-# 3회차 기준 실제 출현한 번호 집합(핫)과 미출현 번호 집합(콜드)
-appeared_nums = [num for num in ranked_by_freq if counts.get(num, 0) > 0]
-not_appeared_nums = [num for num in ranked_by_freq if counts.get(num, 0) == 0]
+# 남은 번호들을 출현 빈도 순으로 정렬
+ranked_available = sorted(available_pool, key=lambda x: counts.get(x, 0), reverse=True)
 
-# 핫 넘버 풀: 최근 등장 번호가 6개 이상이면 그 번호들로 구성, 부족하면 상위 10~15개 유지
-hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_by_freq[:12]
-# 콜드 넘버 풀: 최근 안 나온 번호 우선
-cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_by_freq[-15:]
+# 핫/콜드 풀 구성 (제외수 미포함)
+appeared_nums = [n for n in ranked_available if counts.get(n, 0) > 0]
+not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
+
+hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
+cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
 
 # 빈도 데이터 접기/펼치기
-with st.expander(f"📊 최근 {recent_count}회차 출현 데이터 상세"):
+with st.expander(f"📊 최근 {recent_count}회차 출현 상세 (제외수 반영 전)"):
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f"**🔥 출현 번호 (총 {len(appeared_nums)}개)**")
-        top_show = ranked_by_freq[:min(6, len(appeared_nums))]
-        for num in top_show:
-            st.write(f"- {num}번 ({counts.get(num, 0)}회 출현)")
+        st.markdown("**🔥 최다 출현 번호**")
+        for num in ranked_available[:5]:
+            st.write(f"- {num}번 ({counts.get(num, 0)}회)")
     with c2:
-        st.markdown(f"**❄️ 미출현 번호 (총 {len(not_appeared_nums)}개)**")
-        sample_cold = not_appeared_nums[:6] if len(not_appeared_nums) >= 6 else ranked_by_freq[-6:]
-        for num in sample_cold:
-            st.write(f"- {num}번 (0회 출현)")
+        st.markdown("**❄️ 최소 출현 번호**")
+        for num in ranked_available[-5:]:
+            st.write(f"- {num}번 ({counts.get(num, 0)}회)")
 
 # 번호 추첨 버튼
 if st.button("🎲 번호 생성하기", use_container_width=True, type="primary"):
-    st.subheader("🎯 생성된 추천 조합")
-    
-    for i in range(1, game_count + 1):
-        if "핫 넘버 전용" in strategy:
-            picked = random.sample(hot_pool, 6)
-            
-        elif "콜드 넘버 전용" in strategy:
-            picked = random.sample(cold_pool, 6)
-            
-        elif "믹스 조합" in strategy:
-            # 핫에서 3개, 콜드에서 3개 비복원 추출
-            h_pick = random.sample(hot_pool, min(3, len(hot_pool)))
-            c_pick = random.sample(cold_pool, 6 - len(h_pick))
-            picked = h_pick + c_pick
-            
-        else: # 전체 가중치 랜덤
-            weights = [counts.get(n, 0) + 1 for n in range(1, 46)]
-            pool = list(range(1, 46))
-            picked_set = set()
-            t_pool = pool[:]
-            t_weights = weights[:]
-            while len(picked_set) < 6:
-                c = random.choices(t_pool, weights=t_weights, k=1)[0]
-                if c not in picked_set:
+    if len(available_pool) < 6:
+        st.error("제외된 번호가 너무 많아 6개 번호를 구성할 수 없습니다. 제외수를 줄여주세요.")
+    else:
+        st.subheader("🎯 생성된 추천 조합")
+        if excluded_numbers:
+            st.caption(f"제외된 번호: {sorted(excluded_numbers)}")
+
+        for i in range(1, game_count + 1):
+            if "핫 넘버 전용" in strategy:
+                # 핫 넘버 풀에서 6개 비복원 추출 (핫 풀이 6개 미만이면 전체 남은 수에서 보충)
+                pick_pool = hot_pool if len(hot_pool) >= 6 else ranked_available[:12]
+                picked = random.sample(pick_pool, min(6, len(pick_pool)))
+                if len(picked) < 6:
+                    remain = [n for n in available_pool if n not in picked]
+                    picked += random.sample(remain, 6 - len(picked))
+                
+            elif "콜드 넘버 전용" in strategy:
+                pick_pool = cold_pool if len(cold_pool) >= 6 else ranked_available[-12:]
+                picked = random.sample(pick_pool, min(6, len(pick_pool)))
+                if len(picked) < 6:
+                    remain = [n for n in available_pool if n not in picked]
+                    picked += random.sample(remain, 6 - len(picked))
+                
+            elif "믹스 조합" in strategy:
+                h_k = min(3, len(hot_pool))
+                h_pick = random.sample(hot_pool, h_k)
+                
+                c_pool = [n for n in cold_pool if n not in h_pick]
+                c_k = min(6 - len(h_pick), len(c_pool))
+                c_pick = random.sample(c_pool, c_k)
+                
+                picked = h_pick + c_pick
+                if len(picked) < 6:
+                    remain = [n for n in available_pool if n not in picked]
+                    picked += random.sample(remain, 6 - len(picked))
+                
+            else: # 전체 가중치 랜덤
+                weights = [counts.get(n, 0) + 1 for n in available_pool]
+                t_pool = available_pool[:]
+                t_weights = weights[:]
+                picked_set = set()
+                while len(picked_set) < 6 and t_pool:
+                    c = random.choices(t_pool, weights=t_weights, k=1)[0]
                     picked_set.add(c)
                     idx = t_pool.index(c)
                     t_pool.pop(idx)
                     t_weights.pop(idx)
-            picked = list(picked_set)
+                picked = list(picked_set)
 
-        st.write(f"**{i}게임** ({strategy.split()[1]})")
-        render_balls(picked)
+            st.write(f"**{i}게임**")
+            render_balls(picked)
