@@ -1,12 +1,39 @@
-from collections import Counter
-from datetime import datetime
-import json
-import random
-import urllib.request
 import streamlit as st
+import random
+from collections import Counter
+import json
+import os
+import urllib.request
+from datetime import datetime
 
 st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
 
+# ================= 영구 저장소 (JSON 파일 관리) =================
+DATA_FILE = "my_lotto_history.json"
+
+def load_saved_history():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_history_to_disk(history_list):
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(history_list, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"저장 중 오류가 발생했습니다: {e}")
+
+# 앱 시작 시 영구 파일에서 저장 기록 불러오기
+if "my_saved_groups" not in st.session_state:
+    st.session_state.my_saved_groups = load_saved_history()
+if "last_generated_games" not in st.session_state:
+    st.session_state.last_generated_games = []
+
+# ================= UI 디자인 함수 =================
 def get_ball_color(num):
     if num <= 10:
         return "#fbc400"
@@ -20,7 +47,7 @@ def get_ball_color(num):
         return "#b0d840"
 
 def render_balls(numbers, bonus=None):
-    html = '<div style="display: flex; gap: 8px; justify-content: center; align-items: center; margin: 8px 0;">'
+    html = '<div style="display: flex; gap: 8px; justify-content: center; align-items: center; margin: 6px 0;">'
     for n in sorted(numbers):
         color = get_ball_color(n)
         html += f'<div style="background-color: {color}; color: white; font-weight: bold; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{n}</div>'
@@ -31,7 +58,7 @@ def render_balls(numbers, bonus=None):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-# 1240회 ~ 1141회 실데이터 내장 베이스
+# 1240회 ~ 1141회 공식 데이터 베이스
 BASE_DATA = [
     (1240, [11, 13, 19, 20, 31, 44], 27), (1239, [11, 13, 22, 32, 33, 36], 8),
     (1238, [2, 13, 18, 32, 38, 42], 22), (1237, [10, 20, 23, 34, 37, 40], 36),
@@ -117,15 +144,9 @@ def get_updated_lotto_data():
                 break
     return [{"round": r, "numbers": nums, "bonus": b} for r, nums, b in data_list[:100]]
 
-# 세션 상태 초기화 (내 저장 번호 목록 & 방금 생성된 추천 번호)
-if "my_saved_tickets" not in st.session_state:
-    st.session_state.my_saved_tickets = []
-if "last_generated_games" not in st.session_state:
-    st.session_state.last_generated_games = []
-
 data = get_updated_lotto_data()
 latest_round = data[0]["round"]
-target_next_round = latest_round + 1  # 이번에 도전할 다음 회차
+target_next_round = latest_round + 1
 
 st.title("🎰 맞춤 로또 번호 추출기")
 
@@ -140,26 +161,36 @@ with st.container(border=True):
             b_str = f" + 보너스 {item.get('bonus')}" if item.get("bonus") else ""
             st.caption(f"**제 {item['round']}회** : {sorted(item['numbers'])}{b_str}")
 
-# 2. 내 저장 번호 보관함 (상단 요약)
-saved_cnt = len(st.session_state.my_saved_tickets)
-with st.expander(f"📁 나의 저장 번호 보관함 ({saved_cnt}개 저장됨)", expanded=saved_cnt > 0):
-    if not st.session_state.my_saved_tickets:
-        st.info("아직 저장된 번호가 없습니다. 아래에서 추천 번호를 뽑고 [저장] 버튼을 눌러보세요.")
+# 2. 영구 보관함 (새로고침해도 유지됨)
+total_saved_games = sum(len(grp["games"]) for grp in st.session_state.my_saved_groups)
+with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my_saved_groups)}개 세트 / 총 {total_saved_games}게임)", expanded=len(st.session_state.my_saved_groups) > 0):
+    if not st.session_state.my_saved_groups:
+        st.info("아직 보관함에 저장된 번호가 없습니다. 추천 번호를 뽑고 저장해 보세요.")
     else:
-        for idx, ticket in enumerate(st.session_state.my_saved_tickets):
-            c1, c2 = st.columns([4, 1])
-            with c1:
-                st.markdown(f"**[{ticket['round']}회차 도전]** {ticket['name']} ({ticket['time']})")
-                render_balls(ticket["numbers"])
-            with c2:
-                if st.button("🗑️ 삭제", key=f"del_{idx}"):
-                    st.session_state.my_saved_tickets.pop(idx)
-                    st.rerun()
-        if st.button("전체 삭제", type="secondary"):
-            st.session_state.my_saved_tickets = []
+        for grp_idx, grp in enumerate(st.session_state.my_saved_groups):
+            with st.container(border=True):
+                c_title, c_del = st.columns([4, 1])
+                with c_title:
+                    st.markdown(f"**[{grp['round']}회차 도전]** {grp['title']} `({grp['time']})`")
+                with c_del:
+                    if st.button("🗑️ 삭제", key=f"del_grp_{grp_idx}"):
+                        st.session_state.my_saved_groups.pop(grp_idx)
+                        save_history_to_disk(st.session_state.my_saved_groups)
+                        st.rerun()
+                
+                for g_idx, g_nums in enumerate(grp["games"], start=1):
+                    col_label, col_balls = st.columns([1, 6])
+                    with col_label:
+                        st.caption(f"**{g_idx}번**")
+                    with col_balls:
+                        render_balls(g_nums)
+        
+        if st.button("🗑️ 보관함 전체 삭제", type="secondary"):
+            st.session_state.my_saved_groups = []
+            save_history_to_disk([])
             st.rerun()
 
-# 3. 추천 번호 추출 설정
+# 3. 추출 설정
 excluded_numbers = st.multiselect("🚫 조합에서 제외할 번호 선택", options=list(range(1, 46)), placeholder="제외수를 터치해 선택하세요")
 
 max_available = len(data)
@@ -176,7 +207,6 @@ strategy = st.radio("어떤 방식으로 번호를 뽑을까요?", [
     "🎲 확률 비례 골고루 뽑기"
 ])
 
-# 통계 분석 풀 계산
 extract_subset = data[:recent_count]
 all_numbers = [n for item in extract_subset for n in item["numbers"]]
 counts = Counter(all_numbers)
@@ -226,24 +256,45 @@ if st.button("🎲 추천 번호 뽑기", use_container_width=True, type="primar
             generated.append(sorted(picked))
         st.session_state.last_generated_games = generated
 
-# 생성된 번호 출력 및 개별 저장 버튼
+# 생성 결과 표시 및 파일 영구 저장
 if st.session_state.last_generated_games:
+    st.markdown("---")
     st.subheader(f"🎯 제 {target_next_round}회 추천 조합")
+    
+    total_g = len(st.session_state.last_generated_games)
+    save_all = st.button(
+        f"💾 추출된 {total_g}게임 전체 한 번에 보관함 저장하기", 
+        type="primary", 
+        use_container_width=True
+    )
+    if save_all:
+        group_ticket = {
+            "round": target_next_round,
+            "title": f"추천 {total_g}게임 세트",
+            "games": st.session_state.last_generated_games,
+            "time": datetime.now().strftime("%m-%d %H:%M")
+        }
+        # 메모리와 로컬 파일에 동시 기록
+        st.session_state.my_saved_groups.append(group_ticket)
+        save_history_to_disk(st.session_state.my_saved_groups)
+        st.success(f"제 {target_next_round}회차 추천 {total_g}게임이 영구 저장되었습니다!")
+        st.rerun()
+
     for i, nums in enumerate(st.session_state.last_generated_games, start=1):
         with st.container(border=True):
-            col_b, col_btn = st.columns([3, 2])
+            col_b, col_btn = st.columns([3, 1])
             with col_b:
                 st.markdown(f"**{i}게임**")
                 render_balls(nums)
             with col_btn:
-                save_btn = st.button(f"💾 {target_next_round}회차로 저장", key=f"save_{i}_{nums}")
-                if save_btn:
-                    ticket_info = {
+                if st.button("💾 개별저장", key=f"single_save_{i}_{nums}"):
+                    group_ticket = {
                         "round": target_next_round,
-                        "name": f"{i}번째 조합",
-                        "numbers": nums,
+                        "title": f"단일 {i}게임",
+                        "games": [nums],
                         "time": datetime.now().strftime("%m-%d %H:%M")
                     }
-                    st.session_state.my_saved_tickets.append(ticket_info)
-                    st.success(f"제 {target_next_round}회차 목록에 저장되었습니다!")
+                    st.session_state.my_saved_groups.append(group_ticket)
+                    save_history_to_disk(st.session_state.my_saved_groups)
+                    st.success(f"{i}번 게임이 영구 저장되었습니다!")
                     st.rerun()
