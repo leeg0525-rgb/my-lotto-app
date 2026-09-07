@@ -1,7 +1,7 @@
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import random
-import time
 import requests
 import streamlit as st
 
@@ -45,50 +45,50 @@ def get_estimated_latest_drw():
     return (diff_days // 7) + 1
 
 
-# 동행복권 공식 서버에서 실제 최근 100회차 수집 (1시간 캐싱)
-@st.cache_data(ttl=3600, show_spinner="최신 로또 100회차 데이터를 동기화 중입니다...")
-def sync_latest_lotto_history(count=100):
-    latest_drw = get_estimated_latest_drw()
+# latest_drw가 바뀔 때만(토요일 밤 8시 45분 이후) 1회 실행, 평소엔 0초 캐시 반환
+@st.cache_data(
+    show_spinner="새로운 회차가 감지되어 100회차 데이터를 고속 동기화 중입니다..."
+)
+def sync_latest_lotto_history(latest_drw, count=100):
     headers = {"User-Agent": "Mozilla/5.0"}
-    session = requests.Session()
-    session.headers.update(headers)
+    drw_list = list(range(latest_drw, max(0, latest_drw - count), -1))
 
-    results = []
-
-    # 최신 회차부터 역순으로 탐색
-    for drw in range(latest_drw + 1, max(1, latest_drw - count - 5), -1):
+    def fetch_single(drw):
         url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw}"
         try:
-            res = session.get(url, timeout=3)
+            res = requests.get(url, headers=headers, timeout=2.5)
             if res.status_code == 200:
                 data = res.json()
                 if data.get("returnValue") == "success":
-                    nums = [data[f"drwtNo{i}"] for i in range(1, 7)]
-                    bonus = data.get("bnusNo")
-                    results.append(
-                        {
-                            "round": data["drwNo"],
-                            "date": data.get("drwNoDate"),
-                            "numbers": nums,
-                            "bonus": bonus,
-                        }
-                    )
-                    if len(results) >= count:
-                        break
+                    return {
+                        "round": data["drwNo"],
+                        "date": data.get("drwNoDate"),
+                        "numbers": [data[f"drwtNo{i}"] for i in range(1, 7)],
+                        "bonus": data.get("bnusNo"),
+                    }
         except Exception:
-            continue
-        time.sleep(0.04)
+            pass
+        return None
 
+    # 최대 15개 스레드로 동시 병렬 요청 (100개 회차를 1~2초 내에 일괄 수집)
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        fetched = list(executor.map(fetch_single, drw_list))
+
+    results = [r for r in fetched if r is not None]
+    results.sort(key=lambda x: x["round"], reverse=True)
     return results
 
 
+# ================= 앱 UI =================
 st.title("🎰 맞춤 로또 번호 추출기")
 
-data = sync_latest_lotto_history()
+# 최신 회차 번호를 계산하여 캐시 키로 전달
+current_latest_drw = get_estimated_latest_drw()
+data = sync_latest_lotto_history(current_latest_drw, count=100)
 
 if not data:
     st.error(
-        "로또 데이터를 불러올 수 없습니다. 인터넷 연결 및 동행복권 서버 상태를 확인해 주세요."
+        "로또 데이터를 불러올 수 없습니다. 인터넷 연결 및 동행복권 접속 상태를 확인해 주세요."
     )
     st.stop()
 
@@ -120,7 +120,7 @@ excluded_numbers = st.multiselect(
     placeholder="제외하고 싶은 번호를 터치해 선택하세요",
 )
 
-# 3. 분석 및 생성 설정 (1~100회차)
+# 3. 분석 및 생성 설정 (실제 수집된 데이터 길이 기반)
 max_available = len(data)
 col1, col2 = st.columns(2)
 with col1:
