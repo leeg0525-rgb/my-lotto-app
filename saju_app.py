@@ -1,1 +1,504 @@
+import streamlit as st
+import random
+from collections import Counter
+import json
+import os
+import urllib.request
+from datetime import datetime, date
+import io
+import hashlib
+from PIL import Image, ImageDraw, ImageFont
 
+st.set_page_config(page_title="AI 로또 번호 분석기", page_icon="🎰", layout="centered")
+
+# ================= 영구 저장소 (JSON 관리) =================
+DATA_FILE = "my_lotto_history.json"
+
+def load_saved_history():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_history_to_disk(history_list):
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(history_list, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"저장 오류: {e}")
+
+if "my_saved_groups" not in st.session_state:
+    st.session_state.my_saved_groups = load_saved_history()
+if "last_generated_games" not in st.session_state:
+    st.session_state.last_generated_games = []
+if "generated_source_title" not in st.session_state:
+    st.session_state.generated_source_title = "추천 번호 세트"
+if "fortune_message" not in st.session_state:
+    st.session_state.fortune_message = ""
+
+# ================= 색상 및 그래픽 =================
+def get_ball_rgb(num):
+    if num <= 10:
+        return (251, 196, 0)
+    elif num <= 20:
+        return (105, 200, 242)
+    elif num <= 30:
+        return (255, 114, 114)
+    elif num <= 40:
+        return (170, 170, 170)
+    else:
+        return (176, 216, 64)
+
+def get_ball_color(num):
+    rgb = get_ball_rgb(num)
+    return f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
+
+def render_balls(numbers, bonus=None):
+    html = '<div style="display: flex; gap: 8px; justify-content: center; align-items: center; margin: 6px 0;">'
+    for n in sorted(numbers):
+        color = get_ball_color(n)
+        html += f'<div style="background-color: {color}; color: white; font-weight: bold; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{n}</div>'
+    if bonus:
+        html += '<div style="font-size: 18px; font-weight: bold; color: #888; margin: 0 4px;">+</div>'
+        b_color = get_ball_color(bonus)
+        html += f'<div style="background-color: {b_color}; color: white; font-weight: bold; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{bonus}</div>'
+    html += '</div>'
+    st.markdown(html, unsafe_allow_html=True)
+
+# 영수증 티켓 이미지 생성 함수
+def create_ticket_image(round_no, games_list, time_str, ticket_title="추천 조합"):
+    width = 460
+    header_h = 130
+    row_h = 58
+    footer_h = 50
+    height = header_h + (len(games_list) * row_h) + footer_h
+    
+    img = Image.new("RGB", (width, height), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    
+    font_bold = ImageFont.load_default()
+    font_main = ImageFont.load_default()
+    font_ball = ImageFont.load_default()
+    for f_path in ["malgunbd.ttf", "AppleGothic.ttf", "DejaVuSans-Bold.ttf"]:
+        try:
+            font_bold = ImageFont.truetype(f_path, 22)
+            font_main = ImageFont.truetype(f_path, 13)
+            font_ball = ImageFont.truetype(f_path, 15)
+            break
+        except Exception:
+            continue
+
+    draw.rectangle([(8, 8), (width - 9, height - 9)], outline=(210, 210, 210), width=2)
+    draw.text((width // 2, 35), "AI LOTTO 6/45", fill=(40, 40, 40), font=font_bold, anchor="mm")
+    draw.text((width // 2, 68), f"제 {round_no}회 {ticket_title}", fill=(30, 90, 200), font=font_bold, anchor="mm")
+    draw.text((width // 2, 98), f"발행일시: {time_str}", fill=(120, 120, 120), font=font_main, anchor="mm")
+    draw.line([(25, 118), (width - 25, 118)], fill=(225, 225, 225), width=1)
+
+    labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+    y_curr = header_h
+    r = 18
+
+    for idx, nums in enumerate(games_list):
+        lbl = labels[idx] if idx < len(labels) else str(idx + 1)
+        draw.text((38, y_curr + 22), f"{lbl} 자 동", fill=(80, 80, 80), font=font_main, anchor="lm")
+        
+        start_x = 118
+        gap = 52
+        for b_idx, n in enumerate(sorted(nums)):
+            cx = start_x + (b_idx * gap)
+            cy = y_curr + 22
+            bg_color = get_ball_rgb(n)
+            draw.ellipse([(cx - r, cy - r), (cx + r, cy + r)], fill=bg_color)
+            draw.text((cx, cy), str(n), fill=(255, 255, 255), font=font_ball, anchor="mm")
+            
+        y_curr += row_h
+
+    draw.line([(25, y_curr + 5), (width - 25, y_curr + 5)], fill=(225, 225, 225), width=1)
+    draw.text((width // 2, y_curr + 28), "1등 당첨을 진심으로 기원합니다!", fill=(140, 140, 140), font=font_main, anchor="mm")
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+# ================= 공식 데이터 연동 =================
+BASE_DATA = [
+    (1240, [11, 13, 19, 20, 31, 44], 27), (1239, [11, 13, 22, 32, 33, 36], 8),
+    (1238, [2, 13, 18, 32, 38, 42], 22), (1237, [10, 20, 23, 34, 37, 40], 36),
+    (1236, [12, 18, 21, 29, 34, 38], 10), (1235, [6, 7, 11, 15, 39, 43], 20),
+    (1234, [1, 15, 19, 31, 35, 43], 27), (1233, [2, 7, 20, 25, 37, 40], 29),
+    (1232, [12, 15, 19, 22, 24, 36], 3), (1231, [4, 13, 14, 18, 31, 38], 15),
+    (1230, [3, 8, 9, 22, 28, 42], 45), (1229, [12, 13, 29, 34, 37, 42], 16),
+    (1228, [24, 29, 30, 31, 35, 44], 1), (1227, [1, 14, 16, 34, 41, 44], 13),
+    (1226, [4, 6, 13, 17, 26, 28], 41), (1225, [8, 9, 19, 25, 41, 42], 33),
+    (1224, [9, 18, 21, 27, 44, 45], 28), (1223, [16, 18, 20, 32, 33, 39], 26),
+    (1222, [4, 11, 17, 22, 32, 41], 34), (1221, [6, 13, 18, 28, 30, 36], 9),
+    (1220, [2, 22, 25, 28, 34, 43], 16), (1219, [1, 2, 15, 28, 39, 45], 31),
+    (1218, [3, 28, 31, 32, 42, 45], 25), (1217, [8, 10, 15, 20, 29, 31], 41),
+    (1216, [3, 10, 14, 15, 23, 24], 25), (1215, [13, 15, 19, 21, 44, 45], 39),
+    (1214, [10, 15, 19, 27, 30, 33], 14), (1213, [5, 11, 25, 27, 36, 38], 2),
+    (1212, [5, 8, 25, 31, 41, 44], 45), (1211, [23, 26, 27, 35, 38, 40], 10),
+    (1210, [1, 7, 9, 17, 27, 38], 31), (1209, [2, 17, 20, 35, 37, 39], 24),
+    (1208, [6, 27, 30, 36, 38, 42], 25), (1207, [10, 22, 24, 27, 38, 45], 11),
+    (1206, [1, 3, 17, 26, 27, 42], 23), (1205, [1, 4, 16, 23, 31, 41], 2),
+    (1204, [8, 16, 28, 30, 31, 44], 27), (1203, [3, 6, 18, 29, 35, 39], 24),
+    (1202, [5, 12, 21, 33, 37, 40], 7), (1201, [7, 9, 24, 27, 35, 36], 37),
+    (1200, [1, 2, 4, 16, 20, 32], 45), (1199, [16, 24, 25, 30, 31, 32], 7),
+    (1198, [26, 30, 33, 38, 39, 41], 21), (1197, [1, 5, 7, 26, 28, 43], 30),
+    (1196, [8, 12, 15, 29, 40, 45], 14), (1195, [3, 15, 27, 33, 34, 36], 37),
+    (1194, [3, 13, 15, 24, 33, 37], 2), (1193, [6, 9, 16, 19, 24, 28], 17),
+    (1192, [10, 16, 23, 36, 39, 40], 11), (1191, [1, 4, 11, 12, 20, 41], 2),
+    (1190, [7, 9, 19, 23, 26, 45], 33), (1189, [9, 19, 29, 35, 37, 38], 31),
+    (1188, [3, 4, 12, 19, 22, 27], 9), (1187, [5, 13, 26, 29, 37, 40], 42),
+    (1186, [2, 8, 13, 16, 23, 28], 35), (1185, [6, 17, 22, 28, 29, 32], 38),
+    (1184, [14, 16, 23, 25, 31, 37], 42), (1183, [4, 15, 17, 23, 27, 36], 31),
+    (1182, [1, 13, 21, 25, 28, 31], 22), (1181, [8, 10, 14, 20, 33, 41], 28),
+    (1180, [6, 12, 18, 37, 40, 41], 3), (1179, [3, 16, 18, 24, 40, 44], 21),
+    (1178, [5, 6, 11, 27, 43, 44], 17), (1177, [3, 7, 15, 16, 19, 43], 21),
+    (1176, [7, 9, 11, 21, 30, 35], 29), (1175, [3, 4, 6, 8, 32, 42], 31),
+    (1174, [8, 11, 14, 17, 36, 39], 22), (1173, [1, 5, 18, 20, 30, 35], 3),
+    (1172, [7, 9, 24, 40, 42, 44], 45), (1171, [3, 6, 7, 11, 12, 17], 19),
+    (1170, [3, 13, 28, 34, 38, 42], 25), (1169, [5, 12, 24, 26, 39, 42], 20),
+    (1168, [9, 21, 24, 30, 33, 37], 29), (1167, [8, 23, 31, 35, 39, 40], 24),
+    (1166, [14, 23, 25, 27, 29, 42], 16), (1165, [6, 7, 27, 29, 38, 45], 17),
+    (1164, [17, 18, 23, 25, 38, 39], 22), (1163, [2, 13, 15, 16, 33, 43], 4),
+    (1162, [20, 21, 22, 25, 28, 29], 6), (1161, [2, 12, 20, 24, 34, 42], 37),
+    (1160, [7, 13, 18, 36, 39, 45], 19), (1159, [3, 9, 27, 28, 38, 39], 7),
+    (1158, [21, 25, 27, 32, 37, 38], 20), (1157, [5, 7, 12, 20, 25, 26], 28),
+    (1156, [30, 31, 34, 39, 41, 45], 7), (1155, [10, 16, 19, 27, 37, 38], 13),
+    (1154, [4, 8, 22, 26, 32, 38], 27), (1153, [1, 9, 10, 13, 35, 44], 5),
+    (1152, [30, 31, 32, 35, 36, 37], 5), (1151, [2, 3, 9, 15, 27, 29], 8),
+    (1150, [8, 9, 18, 35, 39, 45], 25), (1149, [8, 15, 19, 21, 32, 36], 38),
+    (1148, [3, 6, 13, 15, 16, 22], 32), (1147, [7, 11, 24, 26, 27, 37], 32),
+    (1146, [6, 11, 17, 19, 40, 43], 28), (1145, [2, 11, 31, 33, 37, 44], 32),
+    (1144, [3, 4, 12, 15, 26, 34], 6), (1143, [10, 16, 17, 27, 28, 36], 6),
+    (1142, [2, 8, 28, 30, 37, 41], 22), (1141, [7, 11, 12, 21, 26, 35], 20)
+]
+
+def get_current_max_drw():
+    first_drw_date = datetime(2002, 12, 7, 20, 45)
+    diff_days = (datetime.now() - first_drw_date).days
+    return (diff_days // 7) + 1
+
+def fetch_single_drw(drw_no):
+    url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={drw_no}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            d = json.loads(resp.read().decode("utf-8"))
+            if d.get("returnValue") == "success":
+                return (d["drwNo"], [d[f"drwtNo{i}"] for i in range(1, 7)], d.get("bnusNo"))
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_updated_lotto_data():
+    data_list = list(BASE_DATA)
+    last_known = data_list[0][0]
+    expected_drw = get_current_max_drw()
+
+    if expected_drw > last_known:
+        for check_drw in range(last_known + 1, expected_drw + 1):
+            new_item = fetch_single_drw(check_drw)
+            if new_item:
+                data_list.insert(0, new_item)
+            else:
+                break
+    return [{"round": r, "numbers": nums, "bonus": b} for r, nums, b in data_list[:100]]
+
+data = get_updated_lotto_data()
+latest_round = data[0]["round"]
+target_next_round = latest_round + 1
+
+# ================= 사주 & 별자리 데이터 =================
+ELEMENT_NUMS = {
+    "목(木) - 성장과 생기": [3, 8, 13, 18, 23, 28, 33, 38, 43],
+    "화(火) - 열정과 폭발력": [2, 7, 12, 17, 22, 27, 32, 37, 42],
+    "토(土) - 안정과 대지": [5, 10, 15, 20, 25, 30, 35, 40, 45],
+    "금(金) - 결단과 큰 결실": [4, 9, 14, 19, 24, 29, 34, 39, 44],
+    "수(水) - 재물운과 유연함": [1, 6, 11, 16, 21, 26, 31, 36, 41]
+}
+
+ZODIAC_NUMS = {
+    "양자리 (3/21~4/19)": [9, 18, 27, 36, 45],
+    "황소자리 (4/20~5/20)": [6, 15, 24, 33, 42],
+    "쌍둥이자리 (5/21~6/21)": [5, 14, 23, 32, 41],
+    "게자리 (6/22~7/22)": [2, 7, 11, 16, 20, 29],
+    "사자자리 (7/23~8/22)": [1, 4, 10, 19, 28, 37],
+    "처녀자리 (8/23~9/22)": [5, 12, 14, 23, 32, 41],
+    "천칭자리 (9/23~10/22)": [6, 15, 24, 33, 42],
+    "전갈자리 (10/23~11/21)": [9, 18, 27, 36, 45],
+    "사수자리 (11/22~12/21)": [3, 12, 21, 30, 39],
+    "염소자리 (12/22~1/19)": [4, 8, 13, 22, 31, 40],
+    "물병자리 (1/20~2/18)": [4, 7, 11, 22, 29, 38],
+    "물고기자리 (2/19~3/20)": [3, 9, 12, 21, 30, 39]
+}
+
+def get_zodiac_sign(month, day):
+    dates = [(1, 20), (2, 19), (3, 21), (4, 20), (5, 21), (6, 22), 
+             (7, 23), (8, 23), (9, 23), (10, 23), (11, 22), (12, 22)]
+    signs = list(ZODIAC_NUMS.keys())
+    for idx, (m, d) in enumerate(dates):
+        if (month == m and day >= d) or (month == (m % 12) + 1 and day < dates[m % 12][1]):
+            return signs[idx]
+    return signs[-1]
+
+# ================= 상단 공통 영역 =================
+st.title("🎰 맞춤 로또 번호 추출기")
+
+# 1. 최근 당첨 번호
+latest = data[0]
+with st.container(border=True):
+    st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {latest['round']}회) 실제 공식 당첨 번호</div>", unsafe_allow_html=True)
+    render_balls(latest["numbers"], latest.get("bonus"))
+
+# 2. 보관함
+total_saved_games = sum(len(grp["games"]) for grp in st.session_state.my_saved_groups)
+with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my_saved_groups)}개 세트 / 총 {total_saved_games}게임)", expanded=len(st.session_state.my_saved_groups) > 0):
+    if not st.session_state.my_saved_groups:
+        st.info("아직 보관함에 저장된 번호가 없습니다.")
+    else:
+        for grp_idx, grp in enumerate(st.session_state.my_saved_groups):
+            with st.container(border=True):
+                c_title, c_del = st.columns([4, 1])
+                with c_title:
+                    st.markdown(f"**[{grp['round']}회차 도전]** {grp['title']} `({grp['time']})`")
+                with c_del:
+                    if st.button("🗑️ 삭제", key=f"del_grp_{grp_idx}"):
+                        st.session_state.my_saved_groups.pop(grp_idx)
+                        save_history_to_disk(st.session_state.my_saved_groups)
+                        st.rerun()
+                
+                for g_idx, g_nums in enumerate(grp["games"], start=1):
+                    col_label, col_balls = st.columns([1, 6])
+                    with col_label:
+                        st.caption(f"**{g_idx}번**")
+                    with col_balls:
+                        render_balls(g_nums)
+                
+                saved_img_bytes = create_ticket_image(grp["round"], grp["games"], grp["time"], grp["title"])
+                st.download_button(
+                    label="🖼️ 이 세트 영수증 사진 다운로드",
+                    data=saved_img_bytes,
+                    file_name=f"로또_{grp['round']}회_{grp['title']}.png",
+                    mime="image/png",
+                    key=f"dl_saved_{grp_idx}",
+                    use_container_width=True
+                )
+        
+        if st.button("🗑️ 보관함 전체 삭제", type="secondary"):
+            st.session_state.my_saved_groups = []
+            save_history_to_disk([])
+            st.rerun()
+
+# ================= 탭 분리: 기존 통계 vs 신규 운세 =================
+tab_stats, tab_fortune = st.tabs(["📊 [기존] 통계 기반 분석", "🔮 [신규] 사주 & 운세 맞춤 번호"])
+
+# ----------------------------------------------------
+# TAB 1: 기존 통계 기반 추출기 (기존 코드 100% 보존)
+# ----------------------------------------------------
+with tab_stats:
+    excluded_numbers = st.multiselect("🚫 조합에서 제외할 번호 선택", options=list(range(1, 46)), placeholder="제외수를 선택하세요", key="stat_exclude")
+
+    max_available = len(data)
+    col1, col2 = st.columns(2)
+    with col1:
+        recent_count = st.slider("추출에 반영할 최근 회차 수", min_value=1, max_value=max_available, value=min(10, max_available), step=1, key="stat_recent")
+    with col2:
+        game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5, key="stat_games")
+
+    strategy = st.radio("어떤 방식으로 번호를 뽑을까요?", [
+        "🔥 요즘 잘 나오는 번호만 뽑기",
+        "⚡ 반반 섞기 (자주 나온 수 3개 + 안 나온 수 3개)",
+        "❄️ 최근 안 나온 번호만 뽑기 (역발상)",
+        "🎲 확률 비례 골고루 뽑기"
+    ], key="stat_strategy")
+
+    extract_subset = data[:recent_count]
+    all_numbers = [n for item in extract_subset for n in item["numbers"]]
+    counts = Counter(all_numbers)
+    available_pool = [n for n in range(1, 46) if n not in excluded_numbers]
+    ranked_available = sorted(available_pool, key=lambda x: counts.get(x, 0), reverse=True)
+    appeared_nums = [n for n in ranked_available if counts.get(n, 0) > 0]
+    not_appeared_nums = [n for n in ranked_available if counts.get(n, 0) == 0]
+
+    hot_pool = appeared_nums if len(appeared_nums) >= 6 else ranked_available[:max(6, len(ranked_available))]
+    cold_pool = not_appeared_nums if len(not_appeared_nums) >= 6 else ranked_available[-max(6, len(ranked_available)):]
+
+    if st.button("🎲 통계 기반 추천 번호 뽑기", use_container_width=True, type="primary", key="btn_stat"):
+        if len(available_pool) < 6:
+            st.error("제외수가 너무 많아 6개 번호를 구성할 수 없습니다.")
+        else:
+            generated = []
+            for i in range(1, game_count + 1):
+                if "요즘 잘 나오는" in strategy:
+                    pick_pool = hot_pool if len(hot_pool) >= 6 else ranked_available[:12]
+                    picked = random.sample(pick_pool, min(6, len(pick_pool)))
+                elif "최근 안 나온" in strategy:
+                    pick_pool = cold_pool if len(cold_pool) >= 6 else ranked_available[-12:]
+                    picked = random.sample(pick_pool, min(6, len(pick_pool)))
+                elif "반반 섞기" in strategy:
+                    h_k = min(3, len(hot_pool))
+                    h_pick = random.sample(hot_pool, h_k)
+                    c_pool = [n for n in cold_pool if n not in h_pick]
+                    c_k = min(6 - len(h_pick), len(c_pool))
+                    picked = h_pick + random.sample(c_pool, c_k)
+                else:
+                    weights = [counts.get(n, 0) + 1 for n in available_pool]
+                    t_pool, t_weights = available_pool[:], weights[:]
+                    p_set = set()
+                    while len(p_set) < 6 and t_pool:
+                        c = random.choices(t_pool, weights=t_weights, k=1)[0]
+                        p_set.add(c)
+                        idx = t_pool.index(c)
+                        t_pool.pop(idx)
+                        t_weights.pop(idx)
+                    picked = list(p_set)
+
+                if len(picked) < 6:
+                    remain = [n for n in available_pool if n not in picked]
+                    picked += random.sample(remain, 6 - len(picked))
+                
+                generated.append(sorted(picked))
+            st.session_state.last_generated_games = generated
+            st.session_state.generated_source_title = f"통계 추천 ({strategy.split()[1]})"
+            st.session_state.fortune_message = ""
+
+# ----------------------------------------------------
+# TAB 2: 신규 사주 & 별자리 운세 기반 추출기
+# ----------------------------------------------------
+with tab_fortune:
+    st.markdown("##### 🔮 생년월일과 오늘 일진(日辰)의 기운을 담은 번호")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        f_birth_date = st.date_input("생년월일", value=date(1990, 1, 1), min_value=date(1940, 1, 1), max_value=date.today(), key="f_date")
+    with col_f2:
+        hour_list = [
+            "모름 / 무관",
+            "자시 (23:30 ~ 01:29)", "축시 (01:30 ~ 03:29)", "인시 (03:30 ~ 05:29)",
+            "묘시 (05:30 ~ 07:29)", "진시 (07:30 ~ 09:29)", "사시 (09:30 ~ 11:29)",
+            "오시 (11:30 ~ 13:29)", "미시 (13:30 ~ 15:29)", "신시 (15:30 ~ 17:29)",
+            "유시 (17:30 ~ 19:29)", "술시 (19:30 ~ 21:29)", "해시 (21:30 ~ 23:29)"
+        ]
+        f_birth_hour = st.selectbox("태어난 시간대(시진)", hour_list, key="f_hour")
+
+    f_game_count = st.slider("생성할 게임 수", min_value=1, max_value=10, value=5, key="f_games")
+    fortune_mode = st.radio("운세 추천 테마를 선택하세요", [
+        "🌿 오늘의 사주 오행 일진 번호 (매일 변경)",
+        "⭐ 나의 수호 별자리 행운 번호"
+    ], key="f_mode")
+
+    if st.button("🔮 운세 맞춤 번호 뽑기", use_container_width=True, type="primary", key="btn_fortune"):
+        today_s = datetime.now().strftime("%Y-%m-%d")
+        f_generated = []
+
+        if "사주 오행" in fortune_mode:
+            # 생년월일시 + 오늘 날짜 해시로 매일 달라지는 오행 결정
+            seed_s = f"{f_birth_date}_{f_birth_hour}_{today_s}"
+            val = int(hashlib.md5(seed_s.encode()).hexdigest(), 16)
+            elem_names = list(ELEMENT_NUMS.keys())
+            chosen_elem = elem_names[val % len(elem_names)]
+            lucky_pool = ELEMENT_NUMS[chosen_elem]
+
+            st.session_state.fortune_message = (
+                f"🌿 **오늘({today_s})의 사주 일진 분석**\n\n"
+                f"오늘 회원님에게는 **{chosen_elem}**의 기운이 가장 강하게 작용합니다. "
+                f"이 기운을 담은 수비학 번호(`{', '.join(map(str, lucky_pool[:5]))}...`)에 높은 가중치를 배정했습니다."
+            )
+            st.session_state.generated_source_title = f"사주 운세 ({chosen_elem.split()[0]})"
+
+            for i in range(1, f_game_count + 1):
+                # 그날 하루 동안은 동일한 번호가 나오도록 시드 고정
+                g_seed = f"saju_{seed_s}_{i}"
+                rng = random.Random(g_seed)
+                
+                weights = [4 if n in lucky_pool else 1 for n in range(1, 46)]
+                t_pool = list(range(1, 46))
+                t_weights = weights[:]
+                p_set = set()
+                while len(p_set) < 6 and t_pool:
+                    c = rng.choices(t_pool, weights=t_weights, k=1)[0]
+                    p_set.add(c)
+                    idx = t_pool.index(c)
+                    t_pool.pop(idx)
+                    t_weights.pop(idx)
+                f_generated.append(sorted(list(p_set)))
+
+        else:
+            # 별자리 모드
+            z_sign = get_zodiac_sign(f_birth_date.month, f_birth_date.day)
+            lucky_pool = ZODIAC_NUMS[z_sign]
+
+            st.session_state.fortune_message = (
+                f"✨ **{z_sign} 맞춤 행운 번호**\n\n"
+                f"당신의 수호성이 전하는 행운의 번호(`{', '.join(map(str, lucky_pool))}`)를 핵심 축으로 오늘의 번호를 조합했습니다."
+            )
+            st.session_state.generated_source_title = f"별자리 운세 ({z_sign.split()[0]})"
+
+            for i in range(1, f_game_count + 1):
+                g_seed = f"zodiac_{z_sign}_{today_s}_{i}"
+                rng = random.Random(g_seed)
+                
+                weights = [5 if n in lucky_pool else 1 for n in range(1, 46)]
+                t_pool = list(range(1, 46))
+                t_weights = weights[:]
+                p_set = set()
+                while len(p_set) < 6 and t_pool:
+                    c = rng.choices(t_pool, weights=t_weights, k=1)[0]
+                    p_set.add(c)
+                    idx = t_pool.index(c)
+                    t_pool.pop(idx)
+                    t_weights.pop(idx)
+                f_generated.append(sorted(list(p_set)))
+
+        st.session_state.last_generated_games = f_generated
+
+# ================= 공통 추천 결과 화면 & 영수증 발권 =================
+if st.session_state.last_generated_games:
+    st.markdown("---")
+    st.subheader(f"🎯 제 {target_next_round}회 추천 조합")
+    
+    # 운세 스토리텔링 메시지 출력 (운세 탭에서 뽑았을 때만)
+    if st.session_state.fortune_message:
+        st.info(st.session_state.fortune_message)
+    
+    total_g = len(st.session_state.last_generated_games)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    set_title = st.session_state.generated_source_title
+    
+    img_data = create_ticket_image(target_next_round, st.session_state.last_generated_games, now_str, set_title)
+    
+    col_save, col_dl = st.columns(2)
+    with col_save:
+        save_all = st.button(f"💾 보관함에 영구 저장 ({total_g}게임)", type="primary", use_container_width=True)
+        if save_all:
+            group_ticket = {
+                "round": target_next_round,
+                "title": f"{set_title} ({total_g}게임)",
+                "games": st.session_state.last_generated_games,
+                "time": datetime.now().strftime("%m-%d %H:%M")
+            }
+            st.session_state.my_saved_groups.append(group_ticket)
+            save_history_to_disk(st.session_state.my_saved_groups)
+            st.success(f"제 {target_next_round}회차 추천 {total_g}게임이 보관함에 저장되었습니다!")
+            st.rerun()
+
+    with col_dl:
+        st.download_button(
+            label="🖼️ 영수증 사진 다운로드 (PNG)",
+            data=img_data,
+            file_name=f"로또_{target_next_round}회_{set_title}_{total_g}게임.png",
+            mime="image/png",
+            use_container_width=True
+        )
+
+    with st.expander("👁️ 사진 영수증 미리보기"):
+        st.image(img_data, caption=f"제 {target_next_round}회 로또 발권 티켓 ({set_title})", use_container_width=True)
+
+    for i, nums in enumerate(st.session_state.last_generated_games, start=1):
+        with st.container(border=True):
+            st.markdown(f"**{i}게임**")
+            render_balls(nums)
