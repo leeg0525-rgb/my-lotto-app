@@ -56,8 +56,8 @@ def get_ball_color(num):
     rgb = get_ball_rgb(num)
     return f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
 
-def render_balls(numbers, bonus=None):
-    html = '<div style="display: flex; gap: 8px; justify-content: center; align-items: center; margin: 6px 0;">'
+def render_balls(numbers, bonus=None, justify="center"):
+    html = f'<div style="display: flex; gap: 8px; justify-content: {justify}; align-items: center; margin: 4px 0;">'
     for n in sorted(numbers):
         color = get_ball_color(n)
         html += f'<div style="background-color: {color}; color: white; font-weight: bold; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{n}</div>'
@@ -114,7 +114,7 @@ def create_ticket_image(round_no, games_list, time_str):
     # 외곽선
     draw.rectangle([(6 * scale, 6 * scale), (w - 7 * scale, h - 7 * scale)], outline=(220, 220, 220), width=2 * scale)
 
-    # 상단 텍스트 (AI 제거 -> LOTTO 6/45, 말머리 태그 제거 -> 제 N회 추천 조합)
+    # 상단 텍스트 (LOTTO 6/45, 제 N회 추천 조합)
     draw.text((w // 2, 28 * scale), "LOTTO 6/45", fill=(45, 45, 45), font=font_title, anchor="mm")
     draw.text((w // 2, 56 * scale), f"제 {round_no}회 추천 조합", fill=(30, 90, 200), font=font_round, anchor="mm")
     draw.text((w // 2, 82 * scale), f"발행일시: {time_str}", fill=(130, 130, 130), font=font_main, anchor="mm")
@@ -142,7 +142,7 @@ def create_ticket_image(round_no, games_list, time_str):
     draw.line([(20 * scale, y_curr + 4 * scale), (w - 20 * scale, y_curr + 4 * scale)], fill=(230, 230, 230), width=scale)
     draw.text((w // 2, y_curr + 24 * scale), "1등 당첨을 진심으로 기원합니다!", fill=(140, 140, 140), font=font_main, anchor="mm")
 
-    # 고품질 부드러운 리샘플링 다운스케일 (계단현상 완전 제거)
+    # 부드러운 리샘플링 다운스케일
     final_img = img.resize((base_w, base_h), Image.Resampling.LANCZOS)
 
     buf = io.BytesIO()
@@ -314,7 +314,7 @@ st.title("🎰 맞춤 로또 번호 추출기")
 latest = data[0]
 with st.container(border=True):
     st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {latest['round']}회) 실제 공식 당첨 번호</div>", unsafe_allow_html=True)
-    render_balls(latest["numbers"], latest.get("bonus"))
+    render_balls(latest["numbers"], latest.get("bonus"), justify="center")
 
 # 2. 나의 저장 번호 보관함
 total_saved_games = sum(len(grp["games"]) for grp in st.session_state.my_saved_groups)
@@ -333,12 +333,13 @@ with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my
                         save_history_to_disk(st.session_state.my_saved_groups)
                         st.rerun()
                 
+                # 보관함 번호 표시 (수직 중앙 정렬 & 좌측 정렬 적용)
                 for g_idx, g_nums in enumerate(grp["games"], start=1):
-                    col_label, col_balls = st.columns([1, 6])
+                    col_label, col_balls = st.columns([1, 8], vertical_alignment="center")
                     with col_label:
-                        st.caption(f"**{g_idx}번**")
+                        st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 15px; color: #ccc;'>{g_idx}번</div>", unsafe_allow_html=True)
                     with col_balls:
-                        render_balls(g_nums)
+                        render_balls(g_nums, justify="flex-start")
                 
                 saved_img_bytes = create_ticket_image(grp["round"], grp["games"], grp["time"])
                 st.download_button(
@@ -359,7 +360,7 @@ with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my
 tab_stats, tab_fortune = st.tabs(["📊 공식 통계 기반 분석", "🔮 사주 & 별자리 맞춤 운세"])
 
 # ----------------------------------------------------
-# TAB 1: 기존 통계 기반 분석 (기존 로직 100% 보존)
+# TAB 1: 기존 통계 기반 분석
 # ----------------------------------------------------
 with tab_stats:
     excluded_numbers = st.multiselect("🚫 조합에서 제외할 번호 선택", options=list(range(1, 46)), placeholder="제외수를 선택하세요", key="stat_exclude")
@@ -550,7 +551,6 @@ if st.session_state.last_generated_games:
     
     col_save, col_dl = st.columns(2)
     with col_save:
-        # key를 명시해 클릭 상태를 고정하고 복사본(list)으로 영구 저장
         if st.button(f"💾 보관함에 영구 저장 ({total_g}게임)", type="primary", use_container_width=True, key="btn_save_to_storage"):
             group_ticket = {
                 "round": target_next_round,
@@ -576,7 +576,11 @@ if st.session_state.last_generated_games:
     with st.expander("👁️ 저장될 번호 사진 미리보기"):
         st.image(img_data, caption=f"제 {target_next_round}회 추천 번호표", use_container_width=True)
 
+    # 하단 결과 리스트 (수직 중앙 정렬 & 좌측 정렬 적용)
     for i, nums in enumerate(st.session_state.last_generated_games, start=1):
         with st.container(border=True):
-            st.markdown(f"**{i}게임**")
-            render_balls(nums)
+            col_l, col_b = st.columns([1, 8], vertical_alignment="center")
+            with col_l:
+                st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 15px; color: #ccc;'>{i}번</div>", unsafe_allow_html=True)
+            with col_b:
+                render_balls(nums, justify="flex-start")
