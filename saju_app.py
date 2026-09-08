@@ -11,6 +11,23 @@ from PIL import Image, ImageDraw, ImageFont
 
 st.set_page_config(page_title="맞춤 로또 & 사주 번호 추출기", page_icon="🎰", layout="centered")
 
+# ================= 여백 최적화 CSS =================
+st.markdown("""
+<style>
+/* 카드 컨테이너 내부 상하 기본 여백 축소 */
+div[data-testid="stVerticalBlockBorderWrapper"] > div {
+    padding-top: 0.6rem !important;
+    padding-bottom: 0.6rem !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+}
+/* 게임 번호 행 사이 간격 최적화 */
+div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stVerticalBlockBorderWrapper"]) {
+    gap: 0.4rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ================= 영구 저장소 (JSON 관리) =================
 DATA_FILE = "my_lotto_history.json"
 
@@ -57,7 +74,7 @@ def get_ball_color(num):
     return f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
 
 def render_balls(numbers, bonus=None, justify="center"):
-    html = f'<div style="display: flex; gap: 8px; justify-content: {justify}; align-items: center; margin: 4px 0;">'
+    html = f'<div style="display: flex; gap: 8px; justify-content: {justify}; align-items: center; margin: 0; padding: 2px 0;">'
     for n in sorted(numbers):
         color = get_ball_color(n)
         html += f'<div style="background-color: {color}; color: white; font-weight: bold; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.2);">{n}</div>'
@@ -68,7 +85,7 @@ def render_balls(numbers, bonus=None, justify="center"):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-# 한글 폰트 자동 다운로드 (클라우드 환경 글자 깨짐 방지)
+# 한글 폰트 자동 다운로드
 @st.cache_data(show_spinner=False)
 def get_korean_font_path():
     font_path = "NanumGothicBold.ttf"
@@ -82,9 +99,9 @@ def get_korean_font_path():
             return None
     return font_path
 
-# 추천 번호표 사진 이미지 생성 함수 (고해상도 안티앨리어싱 적용)
+# 추천 번호표 사진 이미지 생성 함수
 def create_ticket_image(round_no, games_list, time_str):
-    scale = 2  # 그래픽 깨짐 방지를 위한 2배 슈퍼샘플링
+    scale = 2
     base_w = 400
     base_header_h = 110
     base_row_h = 48
@@ -111,10 +128,7 @@ def create_ticket_image(round_no, games_list, time_str):
     else:
         font_title = font_round = font_main = font_ball = ImageFont.load_default()
 
-    # 외곽선
     draw.rectangle([(6 * scale, 6 * scale), (w - 7 * scale, h - 7 * scale)], outline=(220, 220, 220), width=2 * scale)
-
-    # 상단 텍스트 (LOTTO 6/45, 제 N회 추천 조합)
     draw.text((w // 2, 28 * scale), "LOTTO 6/45", fill=(45, 45, 45), font=font_title, anchor="mm")
     draw.text((w // 2, 56 * scale), f"제 {round_no}회 추천 조합", fill=(30, 90, 200), font=font_round, anchor="mm")
     draw.text((w // 2, 82 * scale), f"발행일시: {time_str}", fill=(130, 130, 130), font=font_main, anchor="mm")
@@ -142,9 +156,7 @@ def create_ticket_image(round_no, games_list, time_str):
     draw.line([(20 * scale, y_curr + 4 * scale), (w - 20 * scale, y_curr + 4 * scale)], fill=(230, 230, 230), width=scale)
     draw.text((w // 2, y_curr + 24 * scale), "1등 당첨을 진심으로 기원합니다!", fill=(140, 140, 140), font=font_main, anchor="mm")
 
-    # 부드러운 리샘플링 다운스케일
     final_img = img.resize((base_w, base_h), Image.Resampling.LANCZOS)
-
     buf = io.BytesIO()
     final_img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
@@ -313,7 +325,7 @@ st.title("🎰 맞춤 로또 번호 추출기")
 # 1. 최근 실제 당첨 번호 박스
 latest = data[0]
 with st.container(border=True):
-    st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 17px;'>🏆 가장 최근 (제 {latest['round']}회) 실제 공식 당첨 번호</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 6px;'>🏆 가장 최근 (제 {latest['round']}회) 실제 공식 당첨 번호</div>", unsafe_allow_html=True)
     render_balls(latest["numbers"], latest.get("bonus"), justify="center")
 
 # 2. 나의 저장 번호 보관함
@@ -333,11 +345,10 @@ with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my
                         save_history_to_disk(st.session_state.my_saved_groups)
                         st.rerun()
                 
-                # 보관함 번호 표시 (수직 중앙 정렬 & 좌측 정렬 적용)
                 for g_idx, g_nums in enumerate(grp["games"], start=1):
                     col_label, col_balls = st.columns([1, 8], vertical_alignment="center")
                     with col_label:
-                        st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 15px; color: #ccc;'>{g_idx}번</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 15px; color: #ccc; line-height: 38px;'>{g_idx}번</div>", unsafe_allow_html=True)
                     with col_balls:
                         render_balls(g_nums, justify="flex-start")
                 
@@ -539,7 +550,6 @@ if st.session_state.last_generated_games:
     st.markdown("---")
     st.subheader(f"🎯 제 {target_next_round}회 추천 조합")
     
-    # 사주/별자리 탭에서 뽑았을 때만 상세 해설 박스 출력
     if st.session_state.fortune_story:
         st.markdown(st.session_state.fortune_story)
     
@@ -576,11 +586,11 @@ if st.session_state.last_generated_games:
     with st.expander("👁️ 저장될 번호 사진 미리보기"):
         st.image(img_data, caption=f"제 {target_next_round}회 추천 번호표", use_container_width=True)
 
-    # 하단 결과 리스트 (수직 중앙 정렬 & 좌측 정렬 적용)
+    # 하단 결과 리스트 (상하 여백 및 수직 중앙 일치)
     for i, nums in enumerate(st.session_state.last_generated_games, start=1):
         with st.container(border=True):
             col_l, col_b = st.columns([1, 8], vertical_alignment="center")
             with col_l:
-                st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 15px; color: #ccc;'>{i}번</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align: center; font-weight: bold; font-size: 15px; color: #ccc; line-height: 38px;'>{i}번</div>", unsafe_allow_html=True)
             with col_b:
                 render_balls(nums, justify="flex-start")
