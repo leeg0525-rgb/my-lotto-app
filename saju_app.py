@@ -337,7 +337,7 @@ with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my
                     use_container_width=True
                 )
         
-        if st.button("🗑️ 보관함 전체 비우기", type="secondary"):
+        if st.button("🗑️ 보관함 전체 비우기", type="secondary", key="btn_clear_all_storage"):
             st.session_state.my_saved_groups = []
             save_history_to_disk([])
             st.rerun()
@@ -346,7 +346,7 @@ with st.expander(f"📁 나의 저장 번호 보관함 ({len(st.session_state.my
 tab_stats, tab_fortune = st.tabs(["📊 공식 통계 기반 분석", "🔮 사주 & 별자리 맞춤 운세"])
 
 # ----------------------------------------------------
-# TAB 1: 기존 통계 기반 분석 (기존 로직 100% 동일)
+# TAB 1: 기존 통계 기반 분석 (기존 로직 100% 보존)
 # ----------------------------------------------------
 with tab_stats:
     excluded_numbers = st.multiselect("🚫 조합에서 제외할 번호 선택", options=list(range(1, 46)), placeholder="제외수를 선택하세요", key="stat_exclude")
@@ -537,27 +537,27 @@ if st.session_state.last_generated_games:
     
     col_save, col_dl = st.columns(2)
     with col_save:
-        save_all = st.button(f"💾 보관함에 영구 저장 ({total_g}게임)", type="primary", use_container_width=True)
-        if save_all:
+        # key를 명시해 클릭 상태를 고정하고 복사본(list)으로 영구 저장
+        if st.button(f"💾 보관함에 영구 저장 ({total_g}게임)", type="primary", use_container_width=True, key="btn_save_to_storage"):
             group_ticket = {
                 "round": target_next_round,
                 "title": f"{set_title} ({total_g}게임)",
-                "games": st.session_state.last_generated_games,
+                "games": list(st.session_state.last_generated_games),
                 "time": datetime.now().strftime("%m-%d %H:%M")
             }
             st.session_state.my_saved_groups.append(group_ticket)
             save_history_to_disk(st.session_state.my_saved_groups)
-            st.success(f"제 {target_next_round}회차 추천 {total_g}게임이 보관함에 안전하게 저장되었습니다!")
+            st.toast(f"제 {target_next_round}회차 추천 {total_g}게임이 보관함에 저장되었습니다!", icon="📁")
             st.rerun()
 
     with col_dl:
-        # 문구 변경: '영수증 다운로드' -> '오늘의 추천 번호 사진으로 저장'
         st.download_button(
             label="📥 오늘의 추천 번호 사진으로 저장 (PNG)",
             data=img_data,
             file_name=f"로또_{target_next_round}회_{set_title}_{total_g}게임.png",
             mime="image/png",
-            use_container_width=True
+            use_container_width=True,
+            key="btn_download_ticket_png"
         )
 
     with st.expander("👁️ 저장될 번호 사진 미리보기"):
